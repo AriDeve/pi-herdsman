@@ -256,6 +256,101 @@ test("managed agents cancel native session replacement", () => {
   agent.events.get("session_shutdown")?.[0]();
 });
 
+test("duplicate extension loading cannot reject a fresh assignment after accepting it", async () => {
+  // A second module instance reproduces OMP's alias-loading boundary.
+  const { default: registerAlias } =
+    await import("./index.ts?duplicate-registration");
+  const mailbox = setAgentEnvironment("duplicate-registration");
+  const entries: unknown[] = [];
+  const installed = fakePi({ entries });
+  const explicit = fakePi({ entries });
+  const reloaded = fakePi({ entries });
+  // Native OMP binds linked and explicit aliases to separate APIs on one bus.
+  explicit.pi.events = installed.pi.events;
+  registerExtension!(installed.pi as never);
+  registerAlias(explicit.pi as never);
+  const context = fakeAgentContext(entries);
+  let idle = true;
+  context.isIdle = () => idle;
+  try {
+    for (const extension of [installed, explicit])
+      for (const start of extension.events.get("session_start") ?? [])
+        await start(undefined, context);
+    const state = readAgentState(mailbox)!;
+    const request: RequestRecord = {
+      version: 5,
+      runId: state.runId,
+      requestId: randomUUID(),
+      ownerSessionId: state.ownerSessionId,
+      workspaceId: state.workspaceId,
+      agentLabel: state.agentLabel,
+      paneId: state.paneId,
+      kind: "task",
+      text: "Accept this fresh assignment once",
+      createdAt: Date.now(),
+    };
+    writeRequest(mailbox, request);
+    let accepted = 0;
+    for (const extension of [installed, explicit]) {
+      for (const input of extension.events.get("input") ?? []) {
+        const result = input(
+          { text: controlMarker(request.requestId) },
+          context,
+        );
+        if (
+          result &&
+          typeof result === "object" &&
+          "action" in result &&
+          result.action === "transform"
+        ) {
+          accepted++;
+          idle = false;
+        }
+      }
+    }
+    assert.equal(accepted, 1);
+    assert.equal(readAgentState(mailbox)?.activeRequestId, request.requestId);
+    assert.equal(
+      readAgentState(mailbox)?.lastAck?.accepted,
+      true,
+      "a duplicate runtime must not overwrite acceptance with agent_busy",
+    );
+    const second = {
+      ...request,
+      requestId: randomUUID(),
+      text: "Overlapping assignment",
+    };
+    writeRequest(mailbox, second);
+    for (const input of installed.events.get("input") ?? [])
+      input({ text: controlMarker(second.requestId) }, context);
+    assert.equal(readAgentState(mailbox)?.lastAck?.accepted, false);
+    assert.equal(readAgentState(mailbox)?.lastAck?.code, "busy");
+    assert.equal(readAgentState(mailbox)?.activeRequestId, request.requestId);
+    for (const extension of [installed, explicit])
+      for (const shutdown of extension.events.get("session_shutdown") ?? [])
+        await shutdown(undefined, context);
+    reloaded.pi.events = installed.pi.events;
+    registerExtension!(reloaded.pi as never);
+    for (const start of reloaded.events.get("session_start") ?? [])
+      await start(undefined, context);
+    const afterReload = { ...second, requestId: randomUUID() };
+    writeRequest(mailbox, afterReload);
+    for (const input of reloaded.events.get("input") ?? [])
+      input({ text: controlMarker(afterReload.requestId) }, context);
+    assert.equal(
+      readAgentState(mailbox)?.lastAck?.requestId,
+      afterReload.requestId,
+    );
+    assert.equal(readAgentState(mailbox)?.lastAck?.accepted, false);
+    assert.equal(readAgentState(mailbox)?.activeRequestId, request.requestId);
+  } finally {
+    for (const extension of [installed, explicit, reloaded])
+      for (const shutdown of extension.events.get("session_shutdown") ?? [])
+        await shutdown(undefined, context);
+    resetAgentMailbox(mailbox);
+  }
+});
+
 test("managed requests pump through Pi semantic input", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   const mailbox = setAgentEnvironment("pump-agent");
@@ -924,26 +1019,15 @@ test("registered agent writes state, handles input, and settles one result", asy
   assert.ok(agent.events.has("agent_before_settle"));
 
   const context = fakeContext();
-  const promptEvent: any = {
-    systemPromptOptions: { sections: {}, contextFiles: [] },
-  };
-  await agent.events.get("before_agent_start")![0](promptEvent, context as any);
-  assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_agent,
-    /identity: agent:registered-agent/,
-  );
-  assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_agent,
-    /direct_owner: lead/,
-  );
-  assert.equal(
-    "delegating_agent_role" in promptEvent.systemPromptOptions.sections,
-    false,
-  );
-  assert.equal(
-    "agent_definitions" in promptEvent.systemPromptOptions.sections,
-    false,
-  );
+  const promptEvent = { systemPrompt: ["Base system prompt"] };
+  const prompt = (await agent.events.get("before_agent_start")![0](
+    promptEvent,
+    context,
+  )) as { systemPrompt: string[] };
+  assert.deepEqual(prompt.systemPrompt, [
+    "Base system prompt",
+    "identity: agent:registered-agent\ndirect_owner: lead",
+  ]);
   agent.events.get("session_start")![0](undefined, context);
   await new Promise((resolve) => setImmediate(resolve));
   const started = readAgentState(mailbox);
@@ -2513,6 +2597,7 @@ test("independent producer branches publish globally unique semantic refs", asyn
 test("startup and completion metadata omit unavailable model and thinking values", async () => {
   const mailbox = setAgentEnvironment();
   const agent = fakePi();
+  agent.pi.getThinkingLevel = () => "";
   registerExtension!(agent.pi as never);
   const context = fakeContext();
   agent.events.get("session_start")![0](undefined, context);
@@ -2574,7 +2659,7 @@ test("startup and completion metadata preserve available model and thinking valu
   registerExtension!(agent.pi as never);
   const context = fakeContext() as any;
   context.model = { provider: "openai", id: "gpt-5" };
-  context.thinkingLevel = "high";
+  agent.pi.getThinkingLevel = () => "high";
   agent.events.get("session_start")![0](undefined, context);
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -2591,7 +2676,7 @@ test("startup and completion metadata preserve available model and thinking valu
     false,
   );
 
-  context.thinkingLevel = "low";
+  agent.pi.getThinkingLevel = () => "low";
   context.model = { provider: "openai", id: "gpt-5.1" };
   const callsBeforeModelChange = agent.calls.length;
   agent.events.get("model_select")![0](
@@ -2644,6 +2729,7 @@ test("startup and completion metadata preserve available model and thinking valu
 test("successful presentation clears are not repeated by unrelated metadata updates", async () => {
   const mailbox = setAgentEnvironment();
   const agent = fakePi();
+  agent.pi.getThinkingLevel = () => "";
   registerExtension!(agent.pi as never);
   const context = fakeContext();
   agent.events.get("session_start")![0](undefined, context);
@@ -2669,7 +2755,7 @@ test("successful presentation clears are not repeated by unrelated metadata upda
   assert.ok(taskPublication);
   assert.equal(hasClear(taskPublication, "model"), false);
   assert.equal(hasClear(taskPublication, "thinking"), false);
-  (context as any).thinkingLevel = "high";
+  agent.pi.getThinkingLevel = () => "high";
   (context as any).model = { provider: "openai", id: "gpt-5.1" };
   agent.events.get("model_select")![0](
     { model: { provider: "openai", id: "gpt-5.1" } },
@@ -3462,6 +3548,7 @@ test("metadata outage retains one latest desired snapshot", async () => {
   for (let i = 0; i < 100; i++) {
     const model = `model-${i}`;
     const thinking = `thinking-${i}`;
+    agent.pi.getThinkingLevel = () => thinking;
     agent.events.get("model_select")![0](
       { model: { provider: "test", id: model } },
       context,
@@ -3509,6 +3596,7 @@ test("agent shutdown invalidates in-flight metadata", async () => {
       return { stdout: "{}", stderr: "", code: 0 };
     },
   });
+  agent.pi.getThinkingLevel = () => "";
   registerExtension!(agent.pi as never);
   const context = fakeContext();
   agent.events.get("session_start")![0](undefined, context);

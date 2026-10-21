@@ -61,7 +61,7 @@ it does not change the current session. Manager auto-start and context
 retirement show their effective values and identify project overrides, when
 present. Global controls edit global defaults only. `Project overrides…` lets a trusted
 project choose Inherit, On, or Off for Manager auto-start and Context retirement;
-it writes the existing `.pi/settings.json` `piHerdsman` settings. Invalid or
+it writes the existing `.omp/settings.json` `piHerdsman` settings. Invalid or
 untrusted project settings do not prevent global controls from being used. The
 Message limits view edits the user-wide inline attachment and mailbox payload
 limits. It is available only to a lead Pi session with UI.
@@ -78,8 +78,9 @@ transitively owned managed-Agent sessions. The Manager's directly owned Agents
 remain included.
 
 Usage follows Pi's session accounting across the whole session history,
-including assistant responses, model-attributed usage entries, tool-result model
-usage, compaction, and branch summaries. Input includes cached and uncached
+including assistant responses, model-attributed usage entries (including OMP
+`model_usage` calls outside the transcript), tool-result model usage, compaction,
+and branch summaries. Input includes cached and uncached
 tokens, with cache writes shown within uncached input.
 
 The Models section attributes assistant responses to their response model,
@@ -89,8 +90,10 @@ usage entries to their recorded model, and tool/summary usage to
 Repeated references to the same Pi session are counted once. Project assignment
 identity selects managed Leads; live Herdr topology is not required, and
 retiring an assignment removes it from current Manager stats. When exact
-persisted Lead session-file evidence is available, Manager stats open only those
-assigned sessions and their durable Agent trees. Missing, conflicting, or
+persisted Lead session-file evidence is available, Manager stats inspect only those
+assigned sessions and their durable Agent trees. Inspection reads persisted
+snapshots without acquiring session-writer ownership; in-flight text appears only
+after the owning session persists it. Missing, conflicting, or
 identity-mismatched in-scope evidence marks coverage incomplete rather than
 triggering global Pi session discovery. Durable Agent ownership determines each
 Lead's Agent tree. Manager aggregation uses the scope-specific warning

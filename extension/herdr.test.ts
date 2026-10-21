@@ -714,8 +714,8 @@ test("inspection reads raw bounded text and tolerates unavailable process eviden
                 pane_id: "pane",
                 tab_id: gets++ === 0 ? "tab-a" : "tab-b",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -786,8 +786,8 @@ test("inspection preserves structured Herdr read failures", async () => {
                 workspace_id: "workspace",
                 pane_id: "pane",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -845,8 +845,8 @@ test("inspection keeps partial process evidence when pane identity is absent or 
                 pane_id: "pane",
                 tab_id: "tab",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -918,8 +918,8 @@ test("inspection omits malformed process entries without exposing extra fields",
                 workspace_id: "workspace",
                 pane_id: "pane",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -984,8 +984,8 @@ test("inspection preserves bounded terminal output", async () => {
                 workspace_id: "workspace",
                 pane_id: "pane",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -1033,8 +1033,8 @@ test("inspection preserves bounded terminal output", async () => {
                   workspace_id: "workspace",
                   pane_id: "pane",
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: "session",
                   },
@@ -1086,8 +1086,8 @@ test("inspection fails closed when the caller's exact ownership generation chang
                 pane_id: "pane",
                 tab_id: "tab",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session",
                 },
@@ -1579,8 +1579,8 @@ test("start injects mandatory extensions before definition args and configures t
               agent: {
                 name: "agent-run",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "session-id",
                 },
@@ -1607,7 +1607,7 @@ test("start injects mandatory extensions before definition args and configures t
         "--name",
         "value with spaces",
         "Unicode-路径",
-        "--approve",
+        "--no-title",
       ],
     });
   } finally {
@@ -1643,18 +1643,6 @@ test("start injects mandatory extensions before definition args and configures t
       "PI_HERDSMAN_WORKSPACE_ID=root-workspace",
     ],
   );
-  assert.deepEqual(startArgs.slice(startArgs.indexOf("--") + 1), [
-    "--extension",
-    join(dirname(fileURLToPath(import.meta.url)), "index.ts"),
-    "--extension",
-    join(getAgentDir(), "extensions", "herdr-agent-state.ts"),
-    "--extension",
-    definitionExtension,
-    "--name",
-    "value with spaces",
-    "Unicode-路径",
-    "--approve",
-  ]);
   const piArgs = startArgs.slice(startArgs.indexOf("--") + 1);
   const herdsmanExtension = piArgs.indexOf(
     join(dirname(fileURLToPath(import.meta.url)), "index.ts"),
@@ -2345,8 +2333,8 @@ test("fresh panes wait for shell and pane metadata before agent start", async ()
           agent: {
             name: "agent-run",
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "id",
               value: "session-id",
             },
@@ -2712,8 +2700,8 @@ async function startAgentCase(
               agent: {
                 name: "case-agent",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "case-session",
                 },
@@ -3047,8 +3035,8 @@ async function placementCalls(config: {
           agent: {
             name: "agent-run",
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "id",
               value: "session-id",
             },
@@ -3166,8 +3154,8 @@ test("unnamed pane-targeted stop settles only with exact ownership", async () =>
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi",
-    agent: "pi",
+    source: "herdr:omp",
+    agent: "omp",
     kind: "id",
     value: "session-1",
   };
@@ -3292,8 +3280,8 @@ test("preserving stop settles a shell shared with prompt hook children", async (
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi",
-    agent: "pi",
+    source: "herdr:omp",
+    agent: "omp",
     kind: "id",
     value: "session-1",
   };
@@ -3416,8 +3404,8 @@ test("preserving stop does not interrupt an already-restored shell", async () =>
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -3502,8 +3490,8 @@ test("preserving stop does not interrupt an ambiguous shell process group", asyn
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -3580,8 +3568,8 @@ test("preserving stop rejects a surviving original agent process", async () => {
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi",
-    agent: "pi",
+    source: "herdr:omp",
+    agent: "omp",
     kind: "id",
     value: "session-1",
   };
@@ -3747,8 +3735,8 @@ test("preserving stop refuses a process takeover at the destructive boundary", a
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -3831,12 +3819,12 @@ test("preserving stop rejects malformed session identity observations", async ()
     { kind: "unexpected", value: "session-1" },
     {
       source: "other",
-      agent: "pi",
+      agent: "omp",
       kind: "id",
       value: "session-1",
     },
     {
-      source: "herdr:pi",
+      source: "herdr:omp",
       agent: "other",
       kind: "id",
       value: "session-1",
@@ -4080,8 +4068,8 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     assert.equal(
       matchesExpectedSession(
         {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "path",
           value: alias,
         },
@@ -4096,8 +4084,8 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     assert.equal(
       matchesExpectedSession(
         {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "path",
           value: path,
         },
@@ -4116,8 +4104,8 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     assert.equal(
       matchesExpectedSession(
         {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "path",
           value: other,
         },
@@ -4132,7 +4120,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     ] as const)
       assert.equal(
         matchesExpectedSession(
-          { source: "herdr:pi", agent: "pi", kind: "path", value: missing },
+          { source: "herdr:omp", agent: "omp", kind: "path", value: missing },
           expected,
         ),
         matches,
@@ -4147,7 +4135,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     ] as const)
       assert.equal(
         matchesExpectedSession(
-          { source: "herdr:pi", agent: "pi", kind: "path", value: missing },
+          { source: "herdr:omp", agent: "omp", kind: "path", value: missing },
           expected,
         ),
         matches,
@@ -4172,7 +4160,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     ] as const)
       assert.equal(
         matchesExpectedSession(
-          { source: "herdr:pi", agent: "pi", kind: "path", value: missing },
+          { source: "herdr:omp", agent: "omp", kind: "path", value: missing },
           expected,
         ),
         matches,
@@ -4195,7 +4183,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
       ])
         assert.equal(
           matchesExpectedSession(
-            { source: "herdr:pi", agent: "pi", kind: "path", value: missing },
+            { source: "herdr:omp", agent: "omp", kind: "path", value: missing },
             expected,
           ),
           false,
@@ -4205,7 +4193,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     assert.throws(() => readPiSessionHeaderId(root), /EISDIR/);
     assert.equal(
       matchesExpectedSession(
-        { source: "herdr:pi", agent: "pi", kind: "path", value: root },
+        { source: "herdr:omp", agent: "omp", kind: "path", value: root },
         { id: "agent-session", path: root },
       ),
       false,
@@ -4213,7 +4201,7 @@ test("session matching keeps id and canonical path observations kind-aware", () 
     assert.throws(
       () =>
         matchesExpectedSession(
-          { source: "herdr:pi", agent: "pi", kind: "path", value: loop },
+          { source: "herdr:omp", agent: "omp", kind: "path", value: loop },
           { id: "agent-session", path: loop },
         ),
       /could not canonicalize exact Pi session path.*ELOOP/,
@@ -4224,8 +4212,8 @@ test("session matching keeps id and canonical path observations kind-aware", () 
   assert.equal(
     matchesExpectedSession(
       {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: "agent-session",
       },
@@ -4265,8 +4253,8 @@ test("inspection matches canonical native path identities and rejects missing pa
             workspace_id: "workspace",
             pane_id: "pane",
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "path",
               value: alias,
             },
@@ -4300,8 +4288,8 @@ test("inspection matches canonical native path identities and rejects missing pa
             workspace_id: "workspace",
             pane_id: "pane",
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "path",
               value: missing,
             },
@@ -4325,8 +4313,8 @@ test("inspection matches canonical native path identities and rejects missing pa
 
 test("session identity requires the native Pi AgentSessionInfo", () => {
   const valid = {
-    source: "herdr:pi",
-    agent: "pi",
+    source: "herdr:omp",
+    agent: "omp",
     kind: "id" as const,
     value: "agent-session",
   };
@@ -4360,8 +4348,8 @@ test("Herdr session helpers preserve native IDs and canonical exact paths", () =
     writeFileSync(path, '{"type":"session","id":"header-id"}\n');
     const pathAgent = {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "path",
         value: path,
       },
@@ -4374,8 +4362,8 @@ test("Herdr session helpers preserve native IDs and canonical exact paths", () =
     assert.equal(
       herdrSessionId({
         agent_session: {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "id",
           value: "native-id",
         },
@@ -4392,8 +4380,8 @@ test("close accepts a same-workspace tab move without historical tab identity", 
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -4475,8 +4463,8 @@ test("completed agent shell transition closes the pane without stop keys", async
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -4579,8 +4567,8 @@ test("post-completion cleanup accepts only a complete shell-only initial snapsho
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -4689,8 +4677,8 @@ test("shared process-group equality cannot hide a completed shell transition", a
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -4803,8 +4791,8 @@ test("strict close rejects a completed agent shell transition", async () => {
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -4969,8 +4957,8 @@ test("rollback refuses malformed or taken-over process ownership before cleanup"
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -5084,8 +5072,8 @@ test("rollback proves the boundary before keys and resources before close", asyn
   const root = mkdtempSync(join(tmpdir(), "pi-herdsman-rollback-session-"));
   const sessionPath = join(root, "missing-session.jsonl");
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "path" as const,
     value: sessionPath,
   };
@@ -5316,8 +5304,8 @@ test("managed rollback does not interrupt an already-restored shell", async () =
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -5428,8 +5416,8 @@ test("managed rollback does not interrupt an ambiguous shell process group", asy
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };
@@ -5619,8 +5607,8 @@ test("rollback carries the captured occupier through settlement and final cleanu
   const previousWorkspace = environment.HERDR_WORKSPACE_ID;
   environment.HERDR_WORKSPACE_ID = "workspace-1";
   const session = {
-    source: "herdr:pi" as const,
-    agent: "pi" as const,
+    source: "herdr:omp" as const,
+    agent: "omp" as const,
     kind: "id" as const,
     value: "session-1",
   };

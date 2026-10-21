@@ -168,7 +168,7 @@ function parseProjectOverrides(
 }
 
 function projectSettingsFile(ctx: ProjectContext): string {
-  return join(ctx.cwd, ".pi", "settings.json");
+  return join(ctx.cwd, ".omp", "settings.json");
 }
 
 function assertRegularProjectSettings(path: string): number | undefined {

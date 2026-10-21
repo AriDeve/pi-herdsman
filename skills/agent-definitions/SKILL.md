@@ -34,11 +34,11 @@ this skill does not define a second schema or management API.
      - `../../docs/guides/customizing-agents.md`
 
 2. Choose the configuration layer from the requested scope.
-   - Project policy: `<cwd>/.pi/agents/`.
+   - Project policy: `<cwd>/.omp/agents/`.
    - Global user policy: `$PI_CODING_AGENT_DIR/agents/` when that variable is
-     set, otherwise `~/.pi/agent/agents/`.
+     set, otherwise `~/.omp/agent/agents/`.
    - If scope is genuinely ambiguous and materially changes the result, ask.
-   - Never edit bundled definitions under `dist/agent-definitions/`.
+   - Keep bundled definitions unchanged; customize through named overlays.
 
 3. Make the smallest correct Markdown change.
    - Prefer a partial overlay over copying a complete lower-precedence

@@ -9,7 +9,7 @@ noExtensions: true
 noSkills: true
 skills: []
 systemPromptMode: append
-tools: [read, ls, find, grep]
+tools: [read, glob, grep]
 ---
 
 You are reviewer, a disciplined, strictly read-only review agent. Preserve

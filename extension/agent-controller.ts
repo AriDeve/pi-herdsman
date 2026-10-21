@@ -1,19 +1,18 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
-  ProjectedSessionEntry,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-  buildSessionProjection,
+  buildSessionContext,
   CURRENT_SESSION_VERSION,
   parseSessionEntries,
-  SessionManager,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
 import { contentText } from "@earendil-works/pi-ai";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { unlinkSync } from "node:fs";
+import { rmSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, isAbsolute } from "node:path";
@@ -21,6 +20,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { fail, markRetryAttempted, OperationError } from "./errors.ts";
+import {
+  inspectSessionFile,
+  type ForeignSessionSnapshot,
+} from "./foreign-session.ts";
 import {
   agentMailboxPath,
   writeAgentBootstrap,
@@ -1471,45 +1474,39 @@ function truncateTranscriptToolResult(text: string): {
   };
 }
 
-function formatPersistedTranscript(entries: readonly ProjectedSessionEntry[]): {
+function formatPersistedTranscript(messages: AgentMessage[]): {
   text: string;
   truncated: boolean;
 } {
   const blocks: string[] = [];
   let truncated = false;
-  for (const { sourceEntry, messages } of entries) {
+  for (const message of messages) {
     if (
-      sourceEntry.type === "compaction" ||
-      sourceEntry.type === "branch_summary"
+      message.role === "compactionSummary" ||
+      message.role === "branchSummary"
     ) {
-      if (sourceEntry.summary.trim())
+      if (message.summary.trim())
         blocks.push(
-          `${sourceEntry.type === "compaction" ? "compaction" : "branch"} summary:\n${sourceEntry.summary.trim()}`,
+          `${message.role === "compactionSummary" ? "compaction" : "branch"} summary:\n${message.summary.trim()}`,
         );
-      continue;
-    }
-    for (const message of messages) {
-      if (message.role === "user") {
-        const text = contentText(message.content, "").trim();
-        if (text && !parseControlMarker(text)) blocks.push(`user:\n${text}`);
-      } else if (message.role === "assistant") {
-        for (const part of message.content ?? []) {
-          if (part.type === "text" && part.text.trim())
-            blocks.push(`assistant:\n${part.text.trim()}`);
-          else if (part.type === "toolCall")
-            blocks.push(
-              `tool ${part.name}:\n${JSON.stringify(part.arguments)}`,
-            );
-        }
-      } else if (message.role === "toolResult") {
-        const result = truncateTranscriptToolResult(
-          contentText(message.content, "").trim(),
-        );
-        truncated ||= result.truncated;
-        blocks.push(
-          `tool result ${message.toolName}${message.isError ? " [error]" : ""}:${result.text ? `\n${result.text}` : ""}`,
-        );
+    } else if (message.role === "user") {
+      const text = contentText(message.content, "").trim();
+      if (text && !parseControlMarker(text)) blocks.push(`user:\n${text}`);
+    } else if (message.role === "assistant") {
+      for (const part of message.content ?? []) {
+        if (part.type === "text" && part.text.trim())
+          blocks.push(`assistant:\n${part.text.trim()}`);
+        else if (part.type === "toolCall")
+          blocks.push(`tool ${part.name}:\n${JSON.stringify(part.arguments)}`);
       }
+    } else if (message.role === "toolResult") {
+      const result = truncateTranscriptToolResult(
+        contentText(message.content, "").trim(),
+      );
+      truncated ||= result.truncated;
+      blocks.push(
+        `tool result ${message.toolName}${message.isError ? " [error]" : ""}:${result.text ? `\n${result.text}` : ""}`,
+      );
     }
   }
   return { text: blocks.join("\n\n"), truncated };
@@ -1522,7 +1519,16 @@ export function readPersistedTranscript(
 ): { transcript: string; truncated: boolean } {
   const entries = readPersistedSessionEntries(target, readFile, isFile);
   const formatted = formatPersistedTranscript(
-    buildSessionProjection(entries.slice(1) as SessionEntry[]).entries,
+    buildSessionContext(
+      entries.slice(1) as SessionEntry[],
+      undefined,
+      undefined,
+      {
+        transcript: true,
+        collapseCompactedHistory: true,
+        keepDanglingToolCalls: true,
+      },
+    ).messages,
   );
   const bounded = truncateTail(formatted.text, {
     maxBytes: TRANSCRIPT_MAX_BYTES,
@@ -1686,8 +1692,8 @@ export function ownedAssignmentChildren(
 
 export function openOwnedAssignmentSession(
   child: OwnedAssignmentSession,
-): SessionManager | undefined {
-  const manager = SessionManager.open(child.path);
+): ForeignSessionSnapshot | undefined {
+  const manager = inspectSessionFile(child.path);
   if (manager.getSessionId() !== child.id) return undefined;
   let identity: AgentSessionIdentity | undefined;
   try {
@@ -1710,9 +1716,9 @@ export function resolveAssignmentSession(
   options: {
     contextRetirementForSession?: (
       ctx: ExtensionContext,
-      manager: SessionManager,
+      manager: ForeignSessionSnapshot,
     ) => boolean | undefined;
-    isContextRetired?: (manager: SessionManager) => boolean;
+    isContextRetired?: (manager: ForeignSessionSnapshot) => boolean;
   } = {},
 ): ResolvedAssignmentSession {
   const value = raw.trim();
@@ -2014,7 +2020,7 @@ export function resolveAssignmentSession(
     }
     for (const child of children) {
       if (visited.has(child.id)) continue;
-      let manager: SessionManager | undefined;
+      let manager: ForeignSessionSnapshot | undefined;
       try {
         manager = openOwnedAssignmentSession(child);
       } catch {
@@ -2228,7 +2234,7 @@ export function stateAgentDefinition(state: ManagedAgentState): string {
   }
   if (!state.piSessionFile)
     throw new Error("managed agent has no Pi session file");
-  const manager = SessionManager.open(state.piSessionFile);
+  const manager = inspectSessionFile(state.piSessionFile);
   const identity = sessionAgentIdentity(
     manager.getEntries(),
     manager.getSessionId(),
@@ -2688,7 +2694,7 @@ export async function managedAgentSnapshots(
     const now = Date.now();
     const listed = {
       label: state.agentLabel,
-      kind: "pi",
+      kind: "omp",
       state: projectedState,
       steerable,
       workspace_id: state.workspaceId,
@@ -2861,7 +2867,7 @@ export type AgentControllerOptions = {
   build: RuntimeBuild;
   extensionPath: string;
   isContextRetired(
-    manager: Pick<SessionManager, "getEntries" | "getSessionId">,
+    manager: Pick<ForeignSessionSnapshot, "getEntries" | "getSessionId">,
   ): boolean;
   snapshotDependencies: AgentSnapshotDependencies;
   persistedTranscriptReady(state: ManagedAgentState): boolean;
@@ -5924,7 +5930,7 @@ export function createAgentController(
           "Cannot continue the controller's currently active Pi session.",
           p.action,
         );
-      const sessionArgs = resumed ? ["--session", resumed.path] : [];
+      const sessionArgs = resumed ? ["--resume", resumed.path] : [];
       let releaseSessionActivation: (() => void) | undefined;
       const live = (await snapshots(ctx, signal)).agents.map(
         ({ listed }) => listed,
@@ -6437,6 +6443,7 @@ export function createAgentController(
         pendingStarts.set(label, pendingStart);
         options.onChanged();
         let promptPaths: string[] = [];
+        const runtimeDirectories: string[] = [];
         let promptWriteFailed = false;
         let started: StartedHerdrAgent | undefined;
         let accepted = false;
@@ -6561,32 +6568,25 @@ export function createAgentController(
               : []),
             "PI_OFFLINE=1",
           ];
-          // Pi reports the providers that extensions registered; a model from one
-          // of them cannot resolve in a child denied extension discovery.
-          // Older registries and test doubles may not expose the list, in which
-          // case nothing counts as extension-provided and the model is inherited
-          // exactly as before this change.
-          const registeredProviderIds = new Set(
-            ctx.modelRegistry?.getRegisteredProviderIds?.() ?? [],
-          );
+          // OMP does not expose provider registration provenance. Retain
+          // discovery for inherited models rather than silently losing a provider.
           const childModel = resolveChildModel({
             configured: configuredModel(effectiveDefinition.frontmatter),
             inherited:
               !resumed && ctx.model
                 ? { provider: ctx.model.provider, token: modelToken(ctx.model) }
                 : undefined,
-            isForeignProvider: (providerId) =>
-              registeredProviderIds.has(providerId),
+            isForeignProvider: () => true,
           });
-          const launchArgs = agentLaunchArgs(effectiveDefinition, {
+          const launchArgs = await agentLaunchArgs(effectiveDefinition, {
             ...(effectiveDefinition.body
               ? { bodyPromptPath: promptPaths[0] }
               : {}),
             sharedPromptPath: promptPaths[effectiveDefinition.body ? 1 : 0],
             cwd: agentCwd,
             managedAgent: true,
-            approveProject:
-              agentContext.projectTrusted && sameCwd(agentCwd, ctx.cwd),
+            temporaryPaths: promptPaths,
+            runtimeDirectories,
             ...(!resumed ? { inheritedThinking: pi.getThinkingLevel() } : {}),
             modelDecision: childModel,
           });
@@ -6801,7 +6801,7 @@ export function createAgentController(
                     );
                 }
                 if (continuationEvidence && resumed) {
-                  const saved = SessionManager.open(resumed.path);
+                  const saved = inspectSessionFile(resumed.path);
                   if (saved.getSessionId() !== resumed.id)
                     throw new Error(
                       "The exact saved assignment session changed during continuation; retry",
@@ -7041,6 +7041,9 @@ export function createAgentController(
             pendingStarts.delete(label);
             options.onChanged();
           }
+          if (!started?.launchMayHaveStarted)
+            for (const directory of runtimeDirectories)
+              rmSync(directory, { recursive: true, force: true });
           for (const promptPath of promptPaths)
             if (statSync(promptPath, { throwIfNoEntry: false }))
               unlinkSync(promptPath);
@@ -8577,7 +8580,7 @@ function sessionUsageTotals(
   for (const entry of entries) {
     let key: string | undefined;
     let usage;
-    if (entry.type === "usage") {
+    if (entry.type === "usage" || entry.type === "model_usage") {
       key = `${entry.provider}/${entry.model}`;
       usage = entry.usage;
     } else if (
@@ -8604,7 +8607,9 @@ function sessionUsageTotals(
 }
 
 export function collectSessionUsage(
-  ctx: ExtensionContext,
+  ctx: {
+    sessionManager: Pick<ForeignSessionSnapshot, "getEntries" | "getSessionId">;
+  },
   ownedChildren: (
     entries: readonly unknown[],
     ownerSessionId: string,
@@ -8616,8 +8621,8 @@ export function collectSessionUsage(
     path: string;
     definition: string;
     label: string;
-  }) => SessionManager | undefined,
-  leadRoots: readonly SessionManager[] = [],
+  }) => ForeignSessionSnapshot | undefined,
+  leadRoots: readonly ForeignSessionSnapshot[] = [],
   leadCoverageComplete = true,
 ) {
   const rootId = ctx.sessionManager.getSessionId();
@@ -8669,7 +8674,7 @@ export function collectSessionUsage(
       complete = false;
     })) {
       if (visited.has(child.id)) continue;
-      let manager: SessionManager | undefined;
+      let manager: ForeignSessionSnapshot | undefined;
       try {
         manager = openOwnedSession(child);
       } catch {

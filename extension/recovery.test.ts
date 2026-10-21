@@ -617,9 +617,9 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                 workspace_id: WORKSPACE,
                 cwd: "/tmp",
                 agent_session: {
-                  agent: "pi",
+                  agent: "omp",
                   kind: "id",
-                  source: "herdr:pi",
+                  source: "herdr:omp",
                   value: validating
                     ? "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
                     : "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -730,9 +730,9 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                   ? {}
                   : {
                       agent_session: {
-                        agent: "pi",
+                        agent: "omp",
                         kind: "id",
-                        source: "herdr:pi",
+                        source: "herdr:omp",
                         value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                       },
                     }),
@@ -754,7 +754,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                 foreground_processes:
                   !started || stopped
                     ? [{ pid: 123, argv0: "/bin/zsh" }]
-                    : [{ pid: 456, argv0: "pi" }],
+                    : [{ pid: 456, argv0: "omp" }],
               },
             },
           }),
@@ -855,15 +855,15 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
               workspace_id: WORKSPACE,
               cwd: "/tmp",
               agent_session: {
-                agent: "pi",
+                agent: "omp",
                 kind: "id",
-                source: "herdr:pi",
+                source: "herdr:omp",
                 value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
               },
             },
             runtime_identity: {
               herdr_agent: herdrAlias(label),
-              herdr_kind: "pi",
+              herdr_kind: "omp",
               agent_definition: null,
               model: null,
               thinking: null,
@@ -1021,7 +1021,7 @@ test("rollback requires disappearance proof after a successful close", async () 
           : agentStarted
             ? [
                 { pid: 123, argv0: "/bin/zsh" },
-                { pid: 456, argv0: "pi" },
+                { pid: 456, argv0: "omp" },
               ]
             : [{ pid: 123, argv0: "/bin/zsh" }];
         result.stdout = JSON.stringify(payload);
@@ -1116,9 +1116,9 @@ test("assignment rollback retains primary failure and actionable cleanup details
                 workspace_id: WORKSPACE,
                 cwd: "/tmp",
                 agent_session: {
-                  agent: "pi",
+                  agent: "omp",
                   kind: "id",
-                  source: "herdr:pi",
+                  source: "herdr:omp",
                   value:
                     args[2] === "detail-pane"
                       ? "wrong-session"
@@ -1247,9 +1247,9 @@ test("assignment rollback retains primary failure and actionable cleanup details
                 terminal_id: "detail-terminal",
                 cwd: "/tmp",
                 agent_session: {
-                  agent: "pi",
+                  agent: "omp",
                   kind: "id",
-                  source: "herdr:pi",
+                  source: "herdr:omp",
                   value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                 },
               },
@@ -1299,7 +1299,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
             value.agents[0].pane_id = "detail-pane";
             value.agents[0].tab_id = "registered-tab";
             value.agents.push({
-              herdr_kind: "pi",
+              herdr_kind: "omp",
               workspace_id: WORKSPACE,
               pane_id: "unmanaged-root-pane",
               cwd: "/tmp",
@@ -1363,15 +1363,15 @@ test("assignment rollback retains primary failure and actionable cleanup details
               workspace_id: WORKSPACE,
               cwd: "/tmp",
               agent_session: {
-                agent: "pi",
+                agent: "omp",
                 kind: "id",
-                source: "herdr:pi",
+                source: "herdr:omp",
                 value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
               },
             },
             runtime_identity: {
               herdr_agent: herdrAlias(label),
-              herdr_kind: "pi",
+              herdr_kind: "omp",
               agent_definition: null,
               model: null,
               thinking: null,
@@ -1816,16 +1816,15 @@ test("one-shot close failure retains the result for exact cleanup retry", async 
     for (let index = 0; index < 5; index++)
       await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(deliveries, 1);
+    assert.equal(failClose, false, "the initial close must have failed");
     assert.deepEqual(lifecycle.closeOrder, []);
     assert.ok(readResult(mailbox, REQUEST_ID));
 
-    for (let index = 0; index < 4; index++) {
+    await t.waitFor(() => {
       t.mock.timers.tick(250);
-      for (let flush = 0; flush < 10; flush++)
-        await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+      assert.deepEqual(lifecycle.closeOrder, [label]);
+    });
     assert.equal(deliveries, 1);
-    assert.deepEqual(lifecycle.closeOrder, [label]);
     assert.equal(readAgentState(mailbox), undefined);
   } finally {
     pi.events.get("session_shutdown")?.[0]();
@@ -1919,13 +1918,13 @@ test("delivered-result cascade retries descendant mailbox cleanup failure", asyn
     );
 
     realFs.rmSync(obstruction, { recursive: true, force: true });
-    t.mock.timers.tick(250);
-    for (let index = 0; index < 10; index++)
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.deepEqual(lifecycle.closeOrder, [
-      child.agentLabel,
-      parent.agentLabel,
-    ]);
+    await t.waitFor(() => {
+      t.mock.timers.tick(250);
+      assert.deepEqual(lifecycle.closeOrder, [
+        child.agentLabel,
+        parent.agentLabel,
+      ]);
+    });
     assert.equal(readAgentState(parentMailbox), undefined);
     assert.equal(readResult(parentMailbox, REQUEST_ID), undefined);
     assert.equal(readAgentState(childMailbox), undefined);
@@ -2565,8 +2564,8 @@ test("lead recovery integration validation aborts with session shutdown", async 
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: DEFAULT_PI_SESSION_ID,
                     },
@@ -2669,7 +2668,7 @@ test("parent close cascades child-first and reports a structured child failure",
           const value = JSON.parse(result.stdout);
           const envelope = value.result ?? value;
           envelope.agents.push({
-            herdr_kind: "pi",
+            herdr_kind: "omp",
             workspace_id: WORKSPACE,
             pane_id: "unmanaged-root-pane",
             cwd: "/tmp",
@@ -3504,12 +3503,10 @@ test("result is removed after agent state reaches completed", async (t) => {
     1,
   );
   writeAgentState(mailbox, completed);
-  t.mock.timers.tick(250);
-  await Promise.resolve();
-  await Promise.resolve();
-  for (let index = 0; index < 5; index++)
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(readResult(mailbox, REQUEST_ID), undefined);
+  await t.waitFor(() => {
+    t.mock.timers.tick(250);
+    assert.equal(readResult(mailbox, REQUEST_ID), undefined);
+  });
   assert.deepEqual(lifecycle.closeOrder, [label]);
   assert.equal(
     pi.sentMessageCalls.filter(
@@ -3718,10 +3715,10 @@ test("lost result cleanup keeps a later request owned by the mailbox", async (t)
 
       removeRequest(mailbox, secondRequestId);
       if (durableSecondResult) removeResult(mailbox, secondRequestId);
-      t.mock.timers.tick(250);
-      for (let index = 0; index < 8; index++)
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(readAgentState(mailbox), undefined);
+      await t.waitFor(() => {
+        t.mock.timers.tick(250);
+        assert.equal(readAgentState(mailbox), undefined);
+      });
       assert.equal(readResult(mailbox, REQUEST_ID), undefined);
     } finally {
       pi.events.get("session_shutdown")?.[0]();
@@ -3967,9 +3964,9 @@ test("automatic close invokes the exact lifecycle only after live identity proof
                 tab_id: identity.tabId,
                 cwd: "/tmp",
                 agent_session: {
-                  agent: "pi",
+                  agent: "omp",
                   kind: "id",
-                  source: "herdr:pi",
+                  source: "herdr:omp",
                   value: identity.piSessionId,
                 },
               },
@@ -4052,8 +4049,8 @@ test("automatic close invokes the exact lifecycle only after live identity proof
                         workspace_id: WORKSPACE,
                         cwd: "/tmp",
                         agent_session: {
-                          source: "herdr:pi",
-                          agent: "pi",
+                          source: "herdr:omp",
+                          agent: "omp",
                           kind: "id",
                           value: identity.piSessionId,
                         },
@@ -4081,9 +4078,9 @@ test("automatic close invokes the exact lifecycle only after live identity proof
                 workspace_id: WORKSPACE,
                 cwd: "/tmp",
                 agent_session: {
-                  agent: "pi",
+                  agent: "omp",
                   kind: "id",
-                  source: "herdr:pi",
+                  source: "herdr:omp",
                   value: identity.piSessionId,
                 },
               },
@@ -4401,8 +4398,8 @@ test("stale scanner skips every replaced identity field before publication", asy
                       workspace_id: WORKSPACE,
                       cwd: "/tmp",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: DEFAULT_PI_SESSION_ID,
                       },
@@ -5168,8 +5165,19 @@ test("delivered owner asks repeat without duplicating first delivery", async (t)
     0,
   );
   now += 5 * 60_000;
-  t.mock.timers.tick(30_000);
-  await new Promise((resolve) => setImmediate(resolve));
+  await t.waitFor(() => {
+    t.mock.timers.tick(30_000);
+    assert.equal(
+      pi.sent.filter(
+        (message) =>
+          typeof message === "object" &&
+          message !== null &&
+          "customType" in message &&
+          message.customType === "pi-herdsman-agent-ask",
+      ).length,
+      1,
+    );
+  });
   const reminders = pi.sent.filter(
     (message: any) => message.customType === "pi-herdsman-agent-ask",
   ) as any[];
@@ -5239,8 +5247,8 @@ test("old unacknowledged requests get attention without being resubmitted", asyn
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: identity.piSessionId,
                     },
@@ -5398,9 +5406,19 @@ test("lost managed agents remain visible and repeatedly notify their owner", asy
     for (let index = 0; index < 5; index++)
       await new Promise<void>((resolve) => setImmediate(resolve));
     lifecycle.live.delete(label);
-    t.mock.timers.tick(30_000);
-    for (let index = 0; index < 8; index++)
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    await t.waitFor(() => {
+      t.mock.timers.tick(30_000);
+      assert.equal(
+        pi.sent.filter(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "customType" in message &&
+            message.customType === "pi-herdsman-agent-lost",
+        ).length,
+        1,
+      );
+    });
 
     const listed = await agentTool(pi, "list").execute(
       "id",
@@ -6570,8 +6588,8 @@ test("list derives inactivity without changing public state", async () => {
               ),
             ).agents[0],
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "id",
               value: state.piSessionId,
             },

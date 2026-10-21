@@ -5,6 +5,37 @@
 Repository handoff is not complete until the current validation gates have been
 run or a concrete environment blocker is recorded.
 
+For the OMP port, `npm run test:omp` checks native lifecycle adaptation, child
+capability policies, status/title presentation, project settings, and read-only
+native session inspection. The session inspection check runs through OMP's
+real import adapter under Bun, including physical title slots and blob references.
+The command also builds the installed bundle and runs
+`scripts/omp-tool-execution-check.ts` against the real OMP CLI. A local scripted
+provider drives `generalist` through `bash` running `pwd` and `scout` through
+`read` of a temporary file. Both cases verify the configured active tool set;
+an explicit empty-tool policy verifies that unrelated defaults stay disabled.
+These checks use temporary state and do not call an external model API.
+`npm run package:audit` checks the bundled native entry point and packaged skills.
+The upstream Pi smoke scripts remain Pi-targeted; OMP delegation requires a
+separate named Herdr session with OMP's integration loaded.
+
+The local OMP port was exercised with OMP 18.12.3 in an isolated Herdr session:
+the installed bundle delegated to a real OMP child, accepted its mailbox request,
+and delivered its completed result back to the parent. A deterministic local
+provider verified the child identity, merged prompt, `ask_owner`-only tool
+surface, explicit skill discovery with relative resources, and denied project
+context. Manager activation/return-to-Lead and Chief activation/prompt assembly
+were also exercised in a Git-rooted Herdr workspace. No external model API was used.
+
+Herdsman registers one runtime per OMP session bus, including when a linked
+plugin path and an explicit realpath load separate copies of its factory.
+The duplicate-loading regression in `extension/agent-runtime.test.ts` checks
+that first-assignment acceptance is not overwritten, overlapping assignments
+remain rejected, and shutdown permits rebinding on the same session bus.
+An isolated native RPC smoke also loaded both installed bundle aliases,
+accepted the first mailbox task, rejected an overlapping task, and published
+the first task's completed result using a deterministic local provider.
+
 ## Validation order
 
 Focused tests, smoke testing, review, and all intermediate checks happen first.

@@ -1,5 +1,15 @@
 # Changelog
 
+## Local OMP port
+
+- Load from the native `omp.extensions` manifest and launch Herdr's `omp` agent kind.
+- Preserve child tool/context/skill policies using native launch configuration.
+- Adapt mailbox input delivery, terminal outcomes, prompt blocks, compaction events, and asynchronous tool/title changes.
+- Inspect foreign OMP sessions without acquiring writer locks; support title slots, blob references, and model-usage accounting.
+- Use native mouse routing and transcript expansion, and OMP project/global definition locations.
+- Register one Herdsman runtime per OMP session even when linked-plugin and explicit extension paths alias the same bundle; preserve first-assignment acknowledgement and release registration on shutdown.
+- Keep native builtin tools registered before applying Agent allowlists; verify real `generalist` shell execution, `scout` reads, and empty-tool policies in the OMP check command.
+
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 
 

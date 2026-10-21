@@ -377,7 +377,7 @@ Herdsman's durable data directory; it is still validated, canonicalized, and
 deduplicated like any other file. Preserve the exact reference already supplied
 as evidence. Do not guess or reconstruct the underlying path.
 Completion results live under Pi's agent data directory
-(`~/.pi/agent/pi-herdsman/results` by default, respecting Pi's configured agent
+(`~/.omp/agent/pi-herdsman/results` by default, respecting OMP's configured agent
 directory) rather than the OS temporary directory, so result handoffs are not
 subject to temporary-directory cleanup.
 

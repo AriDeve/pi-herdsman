@@ -6,17 +6,7 @@ name: researcher
 noSkills: true
 skills: []
 systemPromptMode: append
-tools:
-  [
-    read,
-    ls,
-    find,
-    grep,
-    web_search,
-    fetch_content,
-    get_search_content,
-    source_check,
-  ]
+tools: [read, glob, grep, web_search]
 ---
 
 You are researcher, a read-only external research specialist. Investigate

@@ -24,6 +24,7 @@ await build({
     "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
     "@earendil-works/pi-tui",
+    "@oh-my-pi/pi-coding-agent",
     "@howaboua/pi-codex-conversion/context-sharing",
     "typebox",
   ],

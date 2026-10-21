@@ -7,45 +7,21 @@ You do not need to call structured coordination tools yourself.
 
 ## 1. Install
 
-You need:
-
-- Node satisfying the released package's `engines.node` requirement
-- Pi at least the released package's `piHerdsman.runtime.pi` baseline
-- herdr at least the released package's
-  `piHerdsman.runtime.herdr.version` baseline
-
-On Linux or macOS, install the released, tested stack:
+You need OMP 18.12.3 or newer, Bun, and Herdr 0.9.1 or newer.
+From this checkout:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/boadij/pi-herdsman/main/install.sh | sh
+npm ci --ignore-scripts
+npm run build
+omp plugin link .
+herdr integration install omp
 ```
 
-The released package publishes its Node, Pi, and herdr runtime requirements.
-On mutable host installs, Pi and herdr baselines are minimums; the bootstrap
-never downgrades a newer runtime.
+The OMP package manifest loads `dist/index.js`, whose fingerprint covers the
+complete orchestration runtime. The upstream bootstrap and container recipes
+install Pi and are not OMP installers.
 
-For Pi, a missing or older installation is handed to Pi's official managed
-installer and the result must meet the tested minimum. Pi's installer chooses
-its current managed release, so the installed Pi may be newer than Herdsman's
-tested baseline. Afterward, Pi remains natively updateable with `pi update`.
-
-For herdr, a missing or older installation receives the exact checksum-verified
-tested release from package metadata. Existing newer installations are left
-untouched, and subsequent updates remain native through `herdr update`.
-
-If you already manage Pi and herdr yourself:
-
-```sh
-pi install npm:pi-herdsman
-herdr integration install pi
-```
-
-For an SSH-ready Docker deployment, see
-[Container deployment](guides/container-deployment.md). The Docker image is a
-separate, deterministic deployment that installs exact Pi and herdr releases
-with checksum verification.
-
-## 2. Start herdr and Pi
+## 2. Start Herdr and OMP
 
 Start herdr in your project:
 
@@ -53,18 +29,18 @@ Start herdr in your project:
 herdr
 ```
 
-Then start Pi inside the herdr pane:
+Then start OMP inside the Herdr pane:
 
 ```sh
-pi
+omp
 ```
 
-Pi loads the package extension and optional `agents` skill. A Lead started
-outside herdr cannot safely manage herdr-backed Agents.
+OMP loads the extension and bundled Herdsman skills. A Lead started outside
+Herdr cannot safely manage Herdr-backed Agents.
 
 ## 3. Delegate without leaving the conversation
 
-Ask Pi normally:
+Ask OMP normally:
 
 ```text
 Use scout to inspect this repository.

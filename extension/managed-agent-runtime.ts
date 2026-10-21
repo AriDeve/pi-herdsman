@@ -9,7 +9,7 @@ import type {
   SessionBeforeCompactEvent,
   ThinkingLevelSelectEvent,
 } from "@earendil-works/pi-coding-agent";
-import { buildSessionProjection } from "@earendil-works/pi-coding-agent";
+import { buildSessionContext } from "@earendil-works/pi-coding-agent";
 import {
   agentMailboxPath,
   controlMarker,
@@ -1644,7 +1644,7 @@ export function registerManagedAgentInputHandlers(
       const model = ctx.model
         ? `${ctx.model.provider}/${ctx.model.id}`
         : undefined;
-      const thinking = ctx.thinkingLevel;
+      const thinking = pi.getThinkingLevel();
       options.reportMetadata(options.state()!, ctx, {
         activity: { requestId: id, task: request.text, startedAt },
         context: null,
@@ -1751,7 +1751,7 @@ export function registerManagedAgentActivityHandlers(
     const model = ctx.model
       ? `${ctx.model.provider}/${ctx.model.id}`
       : undefined;
-    const thinking = ctx.thinkingLevel;
+    const thinking = pi.getThinkingLevel();
     options.reportMetadata(execution.assignment, ctx, {
       context: percent ?? null,
       ...(model ? { model } : {}),
@@ -1771,7 +1771,7 @@ export function registerManagedAgentActivityHandlers(
   pi.on("model_select", (event: ModelSelectEvent, ctx: ExtensionContext) => {
     if (!execution.assignment) return;
     const model = `${event.model.provider}/${event.model.id}`;
-    const thinking = ctx.thinkingLevel;
+    const thinking = pi.getThinkingLevel();
     options.reportMetadata(execution.assignment, ctx, {
       model,
       ...(thinking ? { thinking } : {}),
@@ -1860,7 +1860,7 @@ export function registerManagedAgentSettlementHandlers(
       const model = ctx.model
         ? `${ctx.model.provider}/${ctx.model.id}`
         : undefined;
-      const thinking = ctx.thinkingLevel;
+      const thinking = pi.getThinkingLevel();
       execution.pendingStateTransition = false;
       execution.stateErrorReported = false;
       if (execution.stateRetryTimer) clearInterval(execution.stateRetryTimer);
@@ -2301,27 +2301,28 @@ export function registerManagedAgentRuntime(
     });
   }
   controller?.registerTools(new Map());
-  pi.on("before_agent_start", (event: any, ctx: ExtensionContext) => {
+  pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
     const definition = process.env.PI_HERDSMAN_AGENT_DEFINITION!;
     const label = process.env.PI_HERDSMAN_LABEL!;
-    event.systemPromptOptions.sections.pi_herdsman_agent = [
-      `identity: ${displayIdentity(definition, label)}`,
-      `direct_owner: ${process.env.PI_HERDSMAN_OWNER_DISPLAY!}`,
-    ].join("\n");
+    const systemPrompt = [
+      ...event.systemPrompt,
+      `identity: ${displayIdentity(definition, label)}\ndirect_owner: ${process.env.PI_HERDSMAN_OWNER_DISPLAY!}`,
+    ];
     if (delegationEnabled) {
       const roster = startupDefinitionRoster;
       const availableRoster =
         roster?.sessionId === ctx.sessionManager.getSessionId()
           ? roster
           : undefined;
-      event.systemPromptOptions.sections.delegating_agent_role =
-        DELEGATING_AGENT_ROLE_CHARTER;
+      systemPrompt.push(DELEGATING_AGENT_ROLE_CHARTER);
       if (availableRoster)
-        event.systemPromptOptions.sections.agent_definitions =
+        systemPrompt.push(
           `${JSON.stringify(availableRoster.definitions)}\n\n` +
-          `This is the session-start definition snapshot. ` +
-          `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`;
+            `This is the session-start definition snapshot. ` +
+            `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`,
+        );
     }
+    return { systemPrompt };
   });
   const execution = createManagedAgentExecutionState();
   const metadataPublisher = createManagedAgentMetadataPublisher(pi);
@@ -2943,12 +2944,11 @@ function sessionRetirementGuidanceVisible(
   ctx: ExtensionContext,
   sessionId: string,
 ): boolean {
-  return buildSessionProjection(ctx.sessionManager.getBranch()).entries.some(
-    ({ sourceEntry, messages }: any) =>
-      sourceEntry.type === "custom_message" &&
-      sourceEntry.customType === AGENT_CONTEXT_RETIRED_ENTRY &&
-      sourceEntry.details?.sessionId === sessionId &&
-      messages.length > 0,
+  return buildSessionContext(ctx.sessionManager.getBranch()).messages.some(
+    (message) =>
+      message.role === "custom" &&
+      message.customType === AGENT_CONTEXT_RETIRED_ENTRY &&
+      message.details?.sessionId === sessionId,
   );
 }
 
@@ -3317,9 +3317,8 @@ export function registerManagedAgentSessionStartHandler(
       execution.initialized = true;
       const definition = process.env.PI_HERDSMAN_AGENT_DEFINITION!;
       const label = execution.assignment.agentLabel;
-      nameSessionIfUnset(
+      await nameSessionIfUnset(
         pi,
-        ctx,
         definition === label ? label : `${definition} · ${label}`,
       );
       execution.stopRequestObserver = observeMailbox(
@@ -3334,7 +3333,7 @@ export function registerManagedAgentSessionStartHandler(
       const model = ctx.model
         ? `${ctx.model.provider}/${ctx.model.id}`
         : undefined;
-      const thinking = ctx.thinkingLevel;
+      const thinking = pi.getThinkingLevel();
       options.reportMetadata(
         execution.assignment,
         ctx,

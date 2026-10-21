@@ -273,7 +273,7 @@ test("a manually continued assigned Lead stays managed and rejects stale Manager
     [managerId, "manager-pane", "manager-tab", WORKSPACE],
     [leadId, "lead-pane", "lead-tab", "linked-workspace"],
   ].map(([id, pane_id, tab_id, workspace_id]) => ({
-    agent_session: { source: "herdr:pi", agent: "pi", kind: "id", value: id },
+    agent_session: { source: "herdr:omp", agent: "omp", kind: "id", value: id },
     pane_id,
     tab_id,
     workspace_id,
@@ -788,8 +788,8 @@ test("worktree removal does not retire an assignment without Manager-scoped Git 
             agents: [
               {
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: managerId,
                 },
@@ -810,8 +810,8 @@ test("worktree removal does not retire an assignment without Manager-scoped Git 
           result: {
             agent: {
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: managerId,
               },
@@ -1056,8 +1056,8 @@ test("project Lead observes Manager availability across turnover without exposin
   const agents: any[] = [
     {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: leadId,
       },
@@ -1067,8 +1067,8 @@ test("project Lead observes Manager availability across turnover without exposin
     },
     {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: managerId,
       },
@@ -1129,10 +1129,7 @@ test("project Lead observes Manager availability across turnover without exposin
     getSessionFile: () => `/tmp/${leadId}.jsonl`,
   };
   const observe = () =>
-    pi.events.get("before_agent_start")![0](
-      { systemPrompt: "prompt", systemPromptOptions: {} },
-      ctx,
-    );
+    pi.events.get("before_agent_start")![0]({ systemPrompt: ["prompt"] }, ctx);
   const latestState = () =>
     branch.findLast(
       (entry) => entry.customType === "pi-herdsman-supervisor-state",
@@ -1230,8 +1227,8 @@ test("project Lead observes Manager availability across turnover without exposin
     });
     agents.push({
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: replacementId,
       },
@@ -1281,7 +1278,7 @@ test("unassigned Lead routes message supervisors directly to Chief", async () =>
     [chiefId, "chief-pane", "chief-tab", WORKSPACE],
     [leadId, "lead-pane", "lead-tab", "linked-workspace"],
   ].map(([id, pane_id, tab_id, workspace_id]) => ({
-    agent_session: { source: "herdr:pi", agent: "pi", kind: "id", value: id },
+    agent_session: { source: "herdr:omp", agent: "omp", kind: "id", value: id },
     pane_id,
     tab_id,
     workspace_id,
@@ -1348,11 +1345,7 @@ test("unassigned Lead routes message supervisors directly to Chief", async () =>
   try {
     await pi.events.get("session_start")![0](undefined, ctx);
     const beforeAgentStart = pi.events.get("before_agent_start")![0];
-    const observe = () =>
-      beforeAgentStart(
-        { systemPrompt: "prompt", systemPromptOptions: {} },
-        ctx,
-      );
+    const observe = () => beforeAgentStart({ systemPrompt: ["prompt"] }, ctx);
     const chiefStateResult = await observe();
     assert.equal(chiefStateResult?.message, undefined);
     const chiefState = branch.at(-1);
@@ -1521,7 +1514,7 @@ test("legacy Lead pendingAsk state is normalized and does not block messaging", 
     [chiefId, "chief-pane", "chief-tab", WORKSPACE],
     [leadId, "lead-pane", "lead-tab", "linked-workspace"],
   ].map(([id, pane_id, tab_id, workspace_id]) => ({
-    agent_session: { source: "herdr:pi", agent: "pi", kind: "id", value: id },
+    agent_session: { source: "herdr:omp", agent: "omp", kind: "id", value: id },
     pane_id,
     tab_id,
     workspace_id,
@@ -1623,7 +1616,7 @@ test("Chief preflight defers inbox delivery until agent_start", async (t) => {
     [sessionId, "chief-pane", "chief-tab", WORKSPACE],
     [senderId, "sender-pane", "sender-tab", WORKSPACE],
   ].map(([id, pane_id, tab_id, workspace_id]) => ({
-    agent_session: { source: "herdr:pi", agent: "pi", kind: "id", value: id },
+    agent_session: { source: "herdr:omp", agent: "omp", kind: "id", value: id },
     pane_id,
     tab_id,
     workspace_id,
@@ -1691,11 +1684,7 @@ test("Chief preflight defers inbox delivery until agent_start", async (t) => {
     );
 
     const beforeAgentStart = pi.events.get("before_agent_start")![0];
-    const preflight = () =>
-      beforeAgentStart(
-        { systemPrompt: "base", systemPromptOptions: { contextFiles: [] } },
-        ctx,
-      );
+    const preflight = () => beforeAgentStart({ systemPrompt: ["base"] }, ctx);
     await Promise.all([preflight(), preflight()]);
     await new Promise((resolve) => setTimeout(resolve, 650));
     assert.equal(
@@ -1820,8 +1809,8 @@ for (const reachable of [true, false]) {
     );
     const managerAgent: any = {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: reachable ? "path" : "id",
         value: reachable ? managerSessionFile : LEAD_SESSION_ID,
       },
@@ -1946,8 +1935,7 @@ for (const reachable of [true, false]) {
         ctx.isIdle = () => true;
         await pi.events.get("before_agent_start")![0](
           {
-            systemPrompt: "base",
-            systemPromptOptions: { contextFiles: [] },
+            systemPrompt: ["base"],
           },
           ctx,
         );
@@ -2255,8 +2243,8 @@ for (const scenario of [
     if (!scenario.assignmentAfterStartup) assertSignal();
     const agent = {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind:
           scenario.mismatchedPath || scenario.prospectivePath ? "path" : "id",
         value: scenario.mismatchedPath
@@ -2271,8 +2259,8 @@ for (const scenario of [
     };
     const manager = {
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "path",
         value: join(tmpdir(), `${managerId}.jsonl`),
       },
@@ -2571,8 +2559,8 @@ test("Manager does not publish an assignment when worktree creation fails", asyn
   });
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -2703,8 +2691,8 @@ test("Manager does not publish an assignment when worktree creation fails", asyn
         agent: {
           name: "lead",
           agent_session: {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: childSession,
           },
@@ -2719,8 +2707,8 @@ test("Manager does not publish an assignment when worktree creation fails", asyn
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: childSession,
                   },
@@ -2740,8 +2728,8 @@ test("Manager does not publish an assignment when worktree creation fails", asyn
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: childSession,
                   },
@@ -2934,8 +2922,8 @@ async function runManagerStartupScenario(
   });
   const originalNow = Date.now;
   const childIdentity = () => ({
-    source: "herdr:pi",
-    agent: "pi",
+    source: "herdr:omp",
+    agent: "omp",
     kind: prospective ? "path" : "id",
     value: prospective ? childSessionPath : childSession,
   });
@@ -2973,8 +2961,8 @@ async function runManagerStartupScenario(
   });
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -3227,8 +3215,8 @@ async function runManagerStartupScenario(
             tab_id: `${treeAgent.agentLabel}-tab`,
             cwd: treeAgent.cwd,
             agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
+              source: "herdr:omp",
+              agent: "omp",
               kind: "id",
               value: treeAgent.piSessionId,
             },
@@ -3402,21 +3390,8 @@ async function runManagerStartupScenario(
     if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
       startCalls++;
       assert.equal(shellReady, true, "agent starts only after shell readiness");
-      assert.deepEqual(args.slice(0, 6), [
-        "agent",
-        "start",
-        args[2],
-        "--kind",
-        "pi",
-        "--pane",
-      ]);
-      assert.equal(args[6], "child-pane");
-      const approvalFlag = projectTrusted ? "--approve" : "--no-approve";
-      assert.ok(args.includes(approvalFlag));
-      assert.equal(
-        args.includes(projectTrusted ? "--no-approve" : "--approve"),
-        false,
-      );
+      assert.equal(args[args.indexOf("--kind") + 1], "omp");
+      assert.equal(args[args.indexOf("--pane") + 1], "child-pane");
       const starting = listProjectAssignments(
         supervisionRuntime(),
         repoKey,
@@ -3433,7 +3408,19 @@ async function runManagerStartupScenario(
         }
         assert.match(starting.text, /\nTask:\ndeliver the fresh assignment/);
       }
-      childSession = starting.id;
+      const resumeIndex = args.indexOf("--resume");
+      assert.notEqual(
+        resumeIndex,
+        -1,
+        "Lead resumes its precreated native session",
+      );
+      const header = JSON.parse(
+        readFileSync(args[resumeIndex + 1]!, "utf8").split("\n")[0]!,
+      ) as { type?: unknown; id?: unknown };
+      assert.equal(header.type, "session");
+      assert.equal(header.id, starting.id);
+      assert.ok(typeof header.id === "string");
+      childSession = header.id;
       if (mode === "success") {
         writeFileSync(
           childSessionPath,
@@ -3446,14 +3433,6 @@ async function runManagerStartupScenario(
           entries: [],
         });
       }
-      assert.equal(args[args.indexOf("--session-id") + 1], starting.id);
-      assert.deepEqual(
-        args.slice(
-          args.indexOf("--session-id"),
-          args.indexOf("--session-id") + 3,
-        ),
-        ["--session-id", starting.id, approvalFlag],
-      );
       assert.deepEqual(Object.keys(starting).sort(), [
         "branch",
         "id",
@@ -3470,8 +3449,8 @@ async function runManagerStartupScenario(
         agent: {
           name: "lead",
           agent_session: {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: childSession,
           },
@@ -3530,8 +3509,8 @@ async function runManagerStartupScenario(
               workspace_id: state.workspaceId,
               cwd: state.cwd,
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: state.piSessionId,
               },
@@ -3541,8 +3520,8 @@ async function runManagerStartupScenario(
               ? [
                   {
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: unrelatedSession,
                     },
@@ -3554,8 +3533,8 @@ async function runManagerStartupScenario(
                     ? [
                         {
                           agent_session: {
-                            source: "herdr:pi",
-                            agent: "pi",
+                            source: "herdr:omp",
+                            agent: "omp",
                             kind: "id",
                             value: secondSession,
                           },
@@ -3577,14 +3556,14 @@ async function runManagerStartupScenario(
                           ? undefined
                           : prospective
                             ? {
-                                source: "herdr:pi",
-                                agent: "pi",
+                                source: "herdr:omp",
+                                agent: "omp",
                                 kind: "path",
                                 value: childSessionPath,
                               }
                             : {
-                                source: "herdr:pi",
-                                agent: "pi",
+                                source: "herdr:omp",
+                                agent: "omp",
                                 kind: "id",
                                 value:
                                   mode === "mismatched-session"
@@ -3675,8 +3654,8 @@ async function runManagerStartupScenario(
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: unrelatedSession,
                   },
@@ -3690,8 +3669,8 @@ async function runManagerStartupScenario(
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: secondSession,
                   },
@@ -3990,16 +3969,21 @@ async function runManagerStartupScenario(
         branch: "smoke/recover",
         text: "  recover\n exact Lead  ",
         ...(mode === "active-missing"
-          ? { piSessionFile: `/tmp/${staleId}.jsonl` }
+          ? { piSessionFile: childSessionPath }
           : {}),
       });
-      if (mode === "active-missing")
+      if (mode === "active-missing") {
+        writeFileSync(
+          childSessionPath,
+          JSON.stringify({ type: "session", id: staleId }),
+        );
         nativeSessions.set(staleId, {
           id: staleId,
-          path: `/tmp/${staleId}.jsonl`,
+          path: childSessionPath,
           cwd: "/old/exact/worktree",
           entries: [],
         });
+      }
       if (
         ["active-missing-legacy", "active-missing-ambiguous"].includes(mode)
       ) {
@@ -4587,7 +4571,7 @@ async function runManagerStartupScenario(
             listProjectAssignments(supervisionRuntime(), repoKey)[0]
               ?.piSessionFile,
             mode === "active-missing"
-              ? `/tmp/${staleId}.jsonl`
+              ? childSessionPath
               : realFs.realpathSync(childSessionPath),
           );
         if (mode === "active-missing-legacy") {
@@ -5505,9 +5489,9 @@ test("Manager rejects over-limit assignments before creating work", () =>
       mailboxPayloadLimitBytes: 1024,
     },
   ));
-test("trusted Manager starts its Lead with approval and the assignment session ID", () =>
+test("trusted Manager starts its Lead with the assignment session identity", () =>
   runManagerStartupScenario("success", true));
-test("untrusted Manager starts its Lead without approval and with the assignment session ID", () =>
+test("untrusted Manager starts its Lead with the assignment session identity", () =>
   runManagerStartupScenario("success", false));
 test("Manager distinguishes Herdr identity and Lead-state bootstrap timeouts", () =>
   runManagerStartupScenario("missing-state"));
@@ -5966,7 +5950,7 @@ test("managed agent validates project definitions before publishing state", asyn
   }
 });
 
-test("trusted same-cwd project assignment launches with native approval", async () => {
+test("same-cwd and canonical symlink project assignments launch native sessions", async () => {
   setLeadEnvironment();
   process.env.HERDR_PANE_ID = "lead-pane";
   const project = realFs.mkdtempSync(
@@ -5977,14 +5961,13 @@ test("trusted same-cwd project assignment launches with native approval", async 
     join(project, ".pi", "agents", "project-only.md"),
     "---\nname: project-only\n---\nproject",
   );
-  const startArgs: string[][] = [];
   const startup = startupExecutor(
     "project-only",
     () => DEFAULT_PI_SESSION_ID,
     undefined,
     undefined,
     false,
-    (args) => startArgs.push(args),
+    undefined,
     project,
     AGENT_ID,
     true,
@@ -6010,7 +5993,6 @@ test("trusted same-cwd project assignment launches with native approval", async 
       true,
       JSON.stringify({ result: result.details, entries: pi.entries }),
     );
-    assert.ok(startArgs[0]?.includes("--approve"));
     const tool = pi.tools.find((candidate) => candidate.name === "steer_agent");
     const rendered = tool.renderCall(
       { agent: result.details.agent, message: "Continue." },
@@ -6038,14 +6020,13 @@ test("trusted same-cwd project assignment launches with native approval", async 
       "---\nname: project-only\n---\nproject",
     );
     realFs.symlinkSync(project, projectLink);
-    const startArgs: string[][] = [];
     const startup = startupExecutor(
       "project-only",
       () => DEFAULT_PI_SESSION_ID,
       undefined,
       undefined,
       false,
-      (args) => startArgs.push(args),
+      undefined,
       project,
       AGENT_ID,
       true,
@@ -6068,7 +6049,6 @@ test("trusted same-cwd project assignment launches with native approval", async 
         true,
         JSON.stringify({ result: result.details, entries: pi.entries }),
       );
-      assert.ok(startArgs[0]?.includes("--approve"));
     } finally {
       pi.events.get("session_shutdown")?.[0]();
       resetAgentMailbox(startup.mailbox);
@@ -6076,49 +6056,6 @@ test("trusted same-cwd project assignment launches with native approval", async 
       realFs.rmSync(project, { recursive: true, force: true });
     }
   })();
-});
-
-test("untrusted assignments omit project approval", async () => {
-  setLeadEnvironment();
-  const project = realFs.mkdtempSync(
-    join(tmpdir(), "pi-herdsman-approval-untrusted-"),
-  );
-  realFs.mkdirSync(join(project, ".pi", "agents"), { recursive: true });
-  const startArgs: string[][] = [];
-  const startup = startupExecutor(
-    "agent",
-    () => DEFAULT_PI_SESSION_ID,
-    undefined,
-    undefined,
-    false,
-    (args) => startArgs.push(args),
-    project,
-    AGENT_ID,
-  );
-  const pi = fakePi({ exec: startup.exec });
-  registerExtension!(pi.pi as never);
-  await pi.events.get("session_start")![0](undefined, fakeContext());
-  const context = fakeContext() as any;
-  context.cwd = project;
-  context.isProjectTrusted = () => false;
-  try {
-    const result = await agentTool(pi, "delegate").execute(
-      "id",
-      {
-        definition: "agent",
-        task: "untrusted",
-      },
-      undefined,
-      undefined,
-      context,
-    );
-    assert.equal(result.details.ok, true, JSON.stringify(result.details));
-    assert.equal(startArgs[0]?.includes("--approve"), false);
-  } finally {
-    pi.events.get("session_shutdown")?.[0]();
-    resetAgentMailbox(startup.mailbox);
-    realFs.rmSync(project, { recursive: true, force: true });
-  }
 });
 
 test("project-only Definitions edits create a global override", async () => {
@@ -6448,7 +6385,7 @@ test("parent list hides disabled allowed definitions", async () => {
       (agent: { agent?: string }) => agent.agent === child.agentLabel,
     );
     assert.deepEqual(liveChildBefore, {
-      kind: "pi",
+      kind: "omp",
       state: "working",
       workspace_id: child.workspaceId,
       pane_id: child.paneId,
@@ -6974,8 +6911,8 @@ test("list retains durable agents whose physical identity is not exact", async (
                     pane_id: invalid.paneId,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: DEFAULT_PI_SESSION_ID,
                     },
@@ -6987,8 +6924,8 @@ test("list retains durable agents whose physical identity is not exact", async (
                     pane_id: valid.paneId,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: valid.piSessionId,
                     },
@@ -7395,9 +7332,9 @@ test("production continuation policy uses the saved project's trusted override",
     [projectA, false],
     [projectB, true],
   ] as const) {
-    realFs.mkdirSync(join(cwd, ".pi"), { recursive: true });
+    realFs.mkdirSync(join(cwd, ".omp"), { recursive: true });
     realFs.writeFileSync(
-      join(cwd, ".pi", "settings.json"),
+      join(cwd, ".omp", "settings.json"),
       JSON.stringify({ piHerdsman: { contextRetirement: value } }),
     );
   }
@@ -7514,7 +7451,7 @@ test("session continuation inherits the saved label without an override", async 
       assert.equal(start.includes("--model"), false);
       assert.equal(start.includes("--thinking"), false);
       assert.equal(
-        start[start.indexOf("--session") + 1],
+        start[start.indexOf("--resume") + 1],
         realFs.realpathSync(source.path),
       );
       assert.equal(start.includes("--fork"), false);
@@ -8289,8 +8226,8 @@ test("session assignment fails closed on duplicate live representations", async 
                   workspace_id: state.workspaceId,
                   cwd: state.cwd,
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: state.piSessionId,
                   },
@@ -8956,8 +8893,8 @@ test("lead steers a blocked parent waiting for direct-child work", async () => {
                   workspace_id: state.workspaceId,
                   cwd: state.cwd,
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: state.piSessionId,
                   },

@@ -1,9 +1,12 @@
 import type {
-  BuildSystemPromptOptions,
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
+import {
+  getSelectListTheme,
+  buildSessionContext,
+} from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent } from "@oh-my-pi/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { visibleWidth, type SelectItem } from "@earendil-works/pi-tui";
 import type {
@@ -44,7 +47,11 @@ import {
   verifyRemoteChiefAuthority,
 } from "./supervision.ts";
 import { OperationError } from "./errors.ts";
-import { sameObservedSessionPath, verifiedHerdrAgent } from "./herdr.ts";
+import {
+  HerdrStartFailure,
+  sameObservedSessionPath,
+  verifiedHerdrAgent,
+} from "./herdr.ts";
 import { ProcessLockOccupiedError } from "./lock.ts";
 import { contentText, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -83,6 +90,7 @@ import type { RuntimeBuild } from "./compatibility.ts";
 import {
   AGENT_COORDINATION_TOOLS,
   agentLaunchArgs,
+  createOmpSessionFile,
   configuredToolPolicy,
   configuredModel,
   discoverRoleDefinition,
@@ -117,9 +125,10 @@ import {
 } from "./presentation.ts";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
-import { realpathSync, statSync, unlinkSync } from "node:fs";
+import { realpathSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { persistedTranscriptReady as controllerPersistedTranscriptReady } from "./agent-controller.ts";
+import { inspectSessionFile } from "./foreign-session.ts";
 
 type LeadIdentityHost = {
   expectedSession(id: string, path?: string): ExpectedSession;
@@ -139,10 +148,6 @@ type LeadIdentityHost = {
 
 type LeadTransitionHost = {
   runHerdr: typeof import("./herdr.ts").runHerdr;
-  SessionManager: Pick<
-    typeof import("@earendil-works/pi-coding-agent").SessionManager,
-    "open"
-  >;
   processRole: string;
   paneId(): string | undefined;
   getSessionName(): string;
@@ -161,9 +166,9 @@ type LeadTransitionHost = {
     ctx: ExtensionContext,
     lease: ChiefLease,
     generation: number,
-  ): void;
-  enterLead(ctx?: ExtensionContext, persist?: boolean): void;
-  enterSuspended(ctx?: ExtensionContext): void;
+  ): Promise<void>;
+  enterLead(ctx?: ExtensionContext, persist?: boolean): Promise<void>;
+  enterSuspended(ctx?: ExtensionContext): Promise<void>;
   resetSupervisionSnapshot(): void;
   unlinkLeadCoordinationState(
     runtime: ReturnType<typeof import("./supervision.ts").supervisionRuntime>,
@@ -275,7 +280,6 @@ type LeadRuntimeOptions = {
     | "liveLead"
     | "managerLease"
     | "pi"
-    | "SessionManager"
     | "stopOwnedAgentsForSession"
     | "withProjectWorkLock"
     | "supervisedSessionFile"
@@ -283,10 +287,6 @@ type LeadRuntimeOptions = {
     | "withProjectAssignmentLock"
   > & {
     extensionPath: string;
-    SessionManager: Pick<
-      typeof import("@earendil-works/pi-coding-agent").SessionManager,
-      "open" | "listAll"
-    >;
   };
   commandHost: LeadCommandBaseHost;
   supervisionHost: Omit<
@@ -541,10 +541,6 @@ type LeadProjectHost = {
   withProjectWorkLock: LeadRoleTransitionRuntime["withProjectWorkLock"];
   leadCoordinationTools: readonly string[];
   pi: ExtensionAPI;
-  SessionManager: Pick<
-    typeof import("@earendil-works/pi-coding-agent").SessionManager,
-    "open" | "listAll"
-  >;
 };
 
 type LeadCoordinationBaseHost = {
@@ -580,7 +576,7 @@ type LeadCoordinationBaseHost = {
   ): Promise<{ inline: { bytes: number }; mailbox: { bytes: number } }>;
   chiefMessageBytes: typeof import("./supervision.ts").chiefMessageBytes;
   coordinationMessageMaxBytes: number;
-  buildSessionProjection: typeof import("@earendil-works/pi-coding-agent").buildSessionProjection;
+  buildSessionContext: typeof buildSessionContext;
   contentText: typeof import("@earendil-works/pi-ai").contentText;
   supervisorStateType: string;
   sameManagerDescriptor: typeof import("./supervision.ts").sameManagerDescriptor;
@@ -952,13 +948,13 @@ export function createLeadShutdownRuntime(host: {
   const isRoot = () => host.isRoot();
   let shutDown = false;
   return {
-    shutdown(_ctx: ExtensionContext): void {
+    async shutdown(_ctx: ExtensionContext): Promise<void> {
       if (shutDown) return;
       shutDown = true;
       host.roleTransitions.beginShutdownRole();
       host.clearStartupDefinitionRoster();
       host.leadInboxRuntime.beginShutdown();
-      host.roleTransitions.shutdownRole();
+      const roleShutdown = host.roleTransitions.shutdownRole();
       host.controller.abortSession();
       host.leadInboxRuntime.shutdown();
       host.controller.clearPendingStarts();
@@ -970,6 +966,7 @@ export function createLeadShutdownRuntime(host: {
       host.roleTransitions.clearLeadContext();
       if (isRoot()) host.herdRun.shutdown();
       host.controller.shutdown();
+      await roleShutdown;
     },
   };
 }
@@ -984,7 +981,7 @@ export function createLeadSessionTreeRuntime(host: {
     "branchRoleObservation" | "reconcileBranchRole"
   >;
   reconcileBranchExecution(ctx: ExtensionContext): Promise<void>;
-  failClosedBranchExecution(ctx: ExtensionContext): void;
+  failClosedBranchExecution(ctx: ExtensionContext): Promise<void>;
   isRoot(): boolean;
   appendRoleError(ctx: ExtensionContext, error: unknown): void;
 }) {
@@ -1011,7 +1008,7 @@ export function createLeadSessionTreeRuntime(host: {
           } catch (roleError) {
             host.appendRoleError(ctx, roleError);
           }
-          host.failClosedBranchExecution(ctx);
+          await host.failClosedBranchExecution(ctx);
           if (roleAtTreeChange.wasChief) watchActiveAsks();
           return;
         }
@@ -1068,8 +1065,8 @@ export function createLeadSessionStartRuntime(host: {
     ctx: ExtensionContext,
     signal?: AbortSignal,
   ): Promise<void>;
-  enterSuspended(ctx: ExtensionContext): void;
-  enterLead(ctx: ExtensionContext): void;
+  enterSuspended(ctx: ExtensionContext): Promise<void>;
+  enterLead(ctx: ExtensionContext): Promise<void>;
   schedulePeerPresence(ctx: ExtensionContext): Promise<void>;
   controller: LeadController;
   leadInboxRuntime: LeadInboxRuntime;
@@ -1160,7 +1157,7 @@ export function createLeadSessionStartRuntime(host: {
           if (sessionSignal.aborted) return;
         }
         skipLeadExecutionProfileResolution = persistedRole === "chief";
-        host.roleTransitions.reconcileRoleTools();
+        await host.roleTransitions.reconcileRoleTools();
         let optionalManager = false;
         if (!hasPersistedRole && !malformedRole) {
           try {
@@ -1188,7 +1185,7 @@ export function createLeadSessionStartRuntime(host: {
         }
         if (sessionSignal.aborted) return;
         if (optionalManager && leadStateValid)
-          host.roleTransitions.finalizeOptionalManagerStartup(ctx);
+          await host.roleTransitions.finalizeOptionalManagerStartup(ctx);
         if (
           !leadStateRestored &&
           !malformedRole &&
@@ -1196,7 +1193,7 @@ export function createLeadSessionStartRuntime(host: {
           !host.roleTransitions.restoreChiefState(ctx)
         )
           malformedRole = true;
-        if (malformedRole) host.roleTransitions.suspendMalformedRole(ctx);
+        if (malformedRole) await host.roleTransitions.suspendMalformedRole(ctx);
         if (host.roleTransitions.shouldRestoreChief(persistedRole)) {
           try {
             await host.activateChief(ctx, true);
@@ -1207,19 +1204,19 @@ export function createLeadSessionStartRuntime(host: {
           } catch (error) {
             if (sessionSignal.aborted) return;
             if (error instanceof ProcessLockOccupiedError) {
-              host.enterSuspended(ctx);
+              await host.enterSuspended(ctx);
             } else {
               host.appendRoleError(ctx, error);
               if (!host.roleTransitions.consumeChiefActivationRollback()) {
                 await host.restoreLeadExecution(ctx, sessionSignal);
                 if (sessionSignal.aborted) return;
-                host.enterLead(ctx);
+                await host.enterLead(ctx);
               }
             }
           }
         } else if (!malformedRole) {
           try {
-            host.roleTransitions.reconcileRoleTools();
+            await host.roleTransitions.reconcileRoleTools();
           } catch (error) {
             host.appendRoleError(ctx, error);
           }
@@ -1299,7 +1296,7 @@ export function createLeadSessionStartRuntime(host: {
           if (!sessionSignal.aborted) {
             host.setLeadExecutionPending(false);
             try {
-              host.roleTransitions.reconcileRoleTools();
+              await host.roleTransitions.reconcileRoleTools();
             } catch (error) {
               host.appendRoleError(ctx, error);
             }
@@ -1352,7 +1349,7 @@ export function createLeadAgentEventRuntime(host: {
     preflight: boolean,
   ): Promise<number>;
   isCurrentChief(ctx: ExtensionContext): boolean;
-  setActiveTools(tools: readonly string[]): void;
+  setActiveTools(tools: readonly string[]): Promise<void>;
   chiefTools: readonly string[];
   leadInboxRuntime: Pick<
     LeadInboxRuntime,
@@ -1368,7 +1365,7 @@ export function createLeadAgentEventRuntime(host: {
     content: string;
     display: boolean;
   }): void;
-  chiefSystemPrompt(options: BuildSystemPromptOptions, body: string): string;
+  chiefSystemPrompt(ctx: ExtensionContext, body: string): Promise<string[]>;
   isActiveManager(): boolean;
   roleCharter(ctx: ExtensionContext): string;
   currentChiefAllowedTools(
@@ -1403,33 +1400,29 @@ export function createLeadAgentEventRuntime(host: {
 }) {
   return {
     async beforeAgentStart(
-      event: any,
+      event: BeforeAgentStartEvent,
       ctx: ExtensionContext,
-    ): Promise<{ systemPrompt: string } | undefined> {
+    ): Promise<{ systemPrompt: string[] }> {
       if (host.isCurrentChief(ctx)) {
-        host.setActiveTools(
+        await host.setActiveTools(
           host.currentChiefAllowedTools(ctx) ?? host.chiefTools,
         );
         host.leadInboxRuntime.holdStartPreflight(ctx);
         const message = await host.prepareSupervisionMessage(ctx);
         if (message) host.sendMessage(message);
         return {
-          systemPrompt: host.chiefSystemPrompt(
-            event.systemPromptOptions,
+          systemPrompt: await host.chiefSystemPrompt(
+            ctx,
             host.supervisoryProfileBody(ctx, "chief"),
           ),
         };
       }
-      event.systemPromptOptions ??= {};
-      const sections = (event.systemPromptOptions.sections ??= {});
-      sections.pi_herdsman_role = host.roleCharter(ctx);
+      const systemPrompt = [...event.systemPrompt, host.roleCharter(ctx)];
       if (host.isActiveManager()) {
-        delete sections.pi_herdsman_lead_execution;
-        delete sections.agent_definitions;
         const message = await host.prepareSupervisionMessage(ctx);
         if (message) host.sendMessage(message);
         await host.drainRetirementNotices(ctx, true);
-        return;
+        return { systemPrompt };
       }
       const supervisorStateMessage = host.isActiveLead()
         ? await host.prepareLeadSupervisorStateMessage(ctx)
@@ -1437,15 +1430,14 @@ export function createLeadAgentEventRuntime(host: {
       if (supervisorStateMessage) host.sendMessage(supervisorStateMessage);
       const roster = host.definitionRoster();
       const prompt = host.isActiveLead() ? host.executionPrompt() : undefined;
-      if (prompt) sections.pi_herdsman_lead_execution = prompt;
-      else delete sections.pi_herdsman_lead_execution;
+      if (prompt) systemPrompt.push(prompt);
       if (roster && roster.sessionId === ctx.sessionManager.getSessionId())
-        sections.agent_definitions =
+        systemPrompt.push(
           `${JSON.stringify(roster.definitions)}\n\n` +
-          `This is the session-start definition snapshot. ` +
-          `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`;
-      else delete sections.agent_definitions;
-      return;
+            `This is the session-start definition snapshot. ` +
+            `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`,
+        );
+      return { systemPrompt };
     },
     agentStart(ctx: ExtensionContext): void {
       host.consumeChiefStartPreflight(ctx);
@@ -3244,15 +3236,15 @@ export function registerLeadRuntime(
     appendRoleError: (ctx, error) =>
       roleHost.appendDurableError(pi, ctx, "pi_herdsman_role_error", error),
   };
-  const enterLead = (ctx?: ExtensionContext, persist = true): void =>
+  const enterLead = (ctx?: ExtensionContext, persist = true): Promise<void> =>
     enterLeadRole(leadRuntime, leadEntryEffects, ctx, persist);
   const enterChief = (
     ctx: ExtensionContext,
     lease: ChiefLease,
     generation: number,
-  ): void =>
+  ): Promise<void> =>
     enterChiefRole(leadRuntime, leadEntryEffects, ctx, lease, generation);
-  const enterSuspended = (ctx?: ExtensionContext): void =>
+  const enterSuspended = (ctx?: ExtensionContext): Promise<void> =>
     enterSuspendedRole(leadRuntime, leadEntryEffects, ctx);
   const executionTools = (): string[] => {
     const baseline = leadToolState.getLeadTools() ?? [];
@@ -3479,7 +3471,11 @@ export function registerLeadRuntime(
     onChanged: () => {
       statusRuntime.requestRefresh();
       supervisionUiRuntime.requestRefresh();
-      roleTransitions?.reconcileRoleTools();
+      roleTransitions?.reconcileRoleTools().catch((error) => {
+        const ctx = leadRuntime.leadContext;
+        if (ctx)
+          roleHost.appendDurableError(pi, ctx, "pi_herdsman_role_error", error);
+      });
     },
     onWorkChanged: (ctx: ExtensionContext) => herdRunRuntime?.maybeFinish(ctx),
     onWorktreeRemoved: (
@@ -3491,7 +3487,7 @@ export function registerLeadRuntime(
         .retireRemovedProjectWork(removed, ctx, signal)
         .then(async () => {
           await restoreLeadExecution(ctx, signal);
-          if (!signal.aborted) roleTransitions.reconcileRoleTools();
+          if (!signal.aborted) await roleTransitions.reconcileRoleTools();
         })
         .catch((error) =>
           options.controllerServices.appendError(
@@ -3774,7 +3770,6 @@ export function registerLeadRuntime(
     leadRuntime: options.leadRuntime,
     HERDSMAN_BUILD: options.build,
     HERDSMAN_EXTENSION_PATH: projectHost.extensionPath,
-    SessionManager: projectHost.SessionManager,
     leadCoordinationTools: options.leadCoordinationToolNames,
     stopProjectLead: (...args: Parameters<typeof projectRuntime.stop>) =>
       projectRuntime.stop(...args),
@@ -3955,7 +3950,7 @@ export function registerLeadRuntime(
       return;
     }
     if (signal.aborted) return;
-    if (assignment) nameSessionIfUnset(pi, ctx, `Lead · ${assignment.branch}`);
+    if (assignment) await nameSessionIfUnset(pi, `Lead · ${assignment.branch}`);
     let saved: LeadExecutionSessionState | undefined;
     try {
       saved = sessionLeadExecutionState(ctx.sessionManager.getBranch());
@@ -4070,7 +4065,7 @@ export function registerLeadRuntime(
     const shouldActivate =
       activeLeadRole(leadRuntime) === "lead" && !leadRuntime.roleSuspended;
     try {
-      if (shouldActivate) pi.setActiveTools(targetTools);
+      if (shouldActivate) await pi.setActiveTools(targetTools);
       persistLeadExecution(mode, baseline);
       leadToolState.setLeadTools(baseline);
       leadExecution = { mode, definition, valid: true, managed: false };
@@ -4087,7 +4082,7 @@ export function registerLeadRuntime(
     } catch (error) {
       leadExecution = previousExecution;
       try {
-        if (shouldActivate) pi.setActiveTools(previousTools);
+        if (shouldActivate) await pi.setActiveTools(previousTools);
         inheritedProjection =
           shouldActivate &&
           previousExecution?.valid &&
@@ -4104,7 +4099,7 @@ export function registerLeadRuntime(
         inheritedProjection = undefined;
         leadExecution = { mode, valid: false, managed: false };
         try {
-          pi.setActiveTools(leadToolState.normalizeLeadTools([]));
+          await pi.setActiveTools(leadToolState.normalizeLeadTools([]));
         } catch {
           // Preserve the original transition failure.
         }
@@ -4136,11 +4131,11 @@ export function registerLeadRuntime(
         valid: true,
         managed: false,
       };
-      pi.setActiveTools(targetTools);
+      await pi.setActiveTools(targetTools);
     } catch (error) {
       leadExecution = { mode: "orchestrate", valid: false, managed: false };
       try {
-        pi.setActiveTools(leadToolState.normalizeLeadTools([]));
+        await pi.setActiveTools(leadToolState.normalizeLeadTools([]));
       } catch {
         // Preserve the original transition failure.
       }
@@ -4177,7 +4172,7 @@ export function registerLeadRuntime(
     leadExecution = { mode, valid: false, managed: !!leadExecution?.managed };
     await restoreLeadExecution(ctx);
     if (leadExecution && !leadExecution.managed && leadExecution.valid)
-      pi.setActiveTools(
+      await pi.setActiveTools(
         leadToolState.projectLeadTools(baseline, leadExecution.definition),
       );
   };
@@ -4227,7 +4222,7 @@ export function registerLeadRuntime(
     isRoot: () => options.roleTransitionHost.processRole === "lead",
     roleTransitions,
     reconcileBranchExecution,
-    failClosedBranchExecution: () => {
+    failClosedBranchExecution: async () => {
       leadExecution = {
         mode:
           leadExecution?.mode ??
@@ -4235,7 +4230,7 @@ export function registerLeadRuntime(
         valid: false,
         managed: !!leadExecution?.managed,
       };
-      roleTransitions.reconcileRoleTools();
+      await roleTransitions.reconcileRoleTools();
     },
     controller,
   });
@@ -4538,11 +4533,11 @@ export function createLeadSupervisionRuntime(host: LeadSupervisionHost) {
     );
     const diagnostics = live.some(
       (agent: any) =>
-        (agent?.agent === "pi" || agent?.agent_session?.agent === "pi") &&
+        (agent?.agent === "omp" || agent?.agent_session?.agent === "omp") &&
         !host.isPiAgent(agent),
     )
       ? [
-          "Live Pi agents are present but their session identities are unresolvable",
+          "Live OMP agents are present but their session identities are unresolvable",
         ]
       : undefined;
     const coordinationStates = agents.flatMap((agent) => {
@@ -6660,7 +6655,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
       );
     if (assignment.piSessionFile) {
       try {
-        const session = host.SessionManager.open(assignment.piSessionFile);
+        const session = inspectSessionFile(assignment.piSessionFile);
         if (
           session.getSessionId() !== assignment.id ||
           resolve(session.getCwd()) !== checkoutPath
@@ -7041,7 +7036,6 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
     leadRuntime,
     HERDSMAN_BUILD,
     HERDSMAN_EXTENSION_PATH,
-    SessionManager,
     supervisedSessionFile,
     sameObservedSessionPath,
     currentManager,
@@ -7433,6 +7427,8 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
       };
     }
     const promptPaths: string[] = [];
+    const runtimeDirectories: string[] = [];
+    let launchMayHaveStarted = false;
     try {
       let workspaceId: string | undefined;
       let paneId: string | undefined;
@@ -7637,9 +7633,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
           const effectiveDefinition =
             body === definition.body ? definition : { ...definition, body };
           if (body) promptPaths.push(...writePrivatePromptSnapshots([body]));
-          const registeredProviderIds = new Set(
-            ctx.modelRegistry?.getRegisteredProviderIds?.() ?? [],
-          );
+          // OMP does not expose provider registration provenance.
           const modelDecision = resolveChildModel({
             configured: configuredModel(effectiveDefinition.frontmatter),
             inherited:
@@ -7649,12 +7643,13 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
                     token: `${ctx.model.provider}/${ctx.model.id}`,
                   }
                 : undefined,
-            isForeignProvider: (providerId) =>
-              registeredProviderIds.has(providerId),
+            isForeignProvider: () => true,
           });
-          const launchArgs = agentLaunchArgs(effectiveDefinition, {
+          const launchArgs = await agentLaunchArgs(effectiveDefinition, {
             ...(body ? { bodyPromptPath: promptPaths.at(-1)! } : {}),
             cwd: cwd!,
+            temporaryPaths: promptPaths,
+            runtimeDirectories,
             requiredTools: host.leadCoordinationTools,
             ...(operation.action === "delegate"
               ? { inheritedThinking: pi.getThinkingLevel() }
@@ -7672,13 +7667,14 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
             extensionPath: HERDSMAN_EXTENSION_PATH,
             agentArgs: [
               ...launchArgs,
-              "--session-id",
-              assignment.id,
-              projectTrusted ? "--approve" : "--no-approve",
+              "--resume",
+              assignment.piSessionFile ??
+                createOmpSessionFile(cwd!, assignment.id),
             ],
             signal,
           });
           startedLead = true;
+          launchMayHaveStarted = true;
         }
       }
       const deadline = Date.now() + 30_000;
@@ -7887,9 +7883,14 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
         },
       };
     } catch (error) {
+      if (error instanceof HerdrStartFailure)
+        launchMayHaveStarted = error.attempt.launchMayHaveStarted;
       appendDurableError(pi, ctx, "pi_herdsman_state_error", error);
       throw error;
     } finally {
+      if (!launchMayHaveStarted)
+        for (const directory of runtimeDirectories)
+          rmSync(directory, { recursive: true, force: true });
       for (const promptPath of promptPaths)
         if (statSync(promptPath, { throwIfNoEntry: false }))
           unlinkSync(promptPath);
@@ -8625,7 +8626,7 @@ export function readLeadSessionIds(
     if (
       ownerPanes.length !== 1 ||
       !dependencies.isPiAgent(ownerAgent) ||
-      ownerPanes[0]?.agent !== "pi"
+      ownerPanes[0]?.agent !== "omp"
     )
       continue;
     try {
@@ -8666,7 +8667,7 @@ export function createLeadCoordinationRuntime(host: LeadCoordinationHost) {
     listPeerLeadRecords,
     publishProjectMessage,
     resolveMessageFiles,
-    buildSessionProjection,
+    buildSessionContext,
     contentText,
     supervisorStateType,
     workspacePresentationProvenance,
@@ -9427,17 +9428,12 @@ export function createLeadCoordinationRuntime(host: LeadCoordinationHost) {
     ctx: ExtensionContext,
     customType: string,
   ): string | undefined => {
-    const entry = [
-      ...buildSessionProjection(ctx.sessionManager.getBranch()).entries,
-    ]
-      .reverse()
-      .find(
-        (candidate: any) =>
-          candidate.sourceEntry.type === "custom_message" &&
-          candidate.sourceEntry.customType === customType &&
-          candidate.messages.length > 0,
-      );
-    const message = entry?.messages[0];
+    const message = buildSessionContext(
+      ctx.sessionManager.getBranch(),
+    ).messages.findLast(
+      (candidate) =>
+        candidate.role === "custom" && candidate.customType === customType,
+    );
     return message ? contentText(message.content, "") : undefined;
   };
   const prepareLeadSupervisorStateMessage = async (ctx: ExtensionContext) => {
@@ -10544,7 +10540,7 @@ export function createLeadInboxRuntime(host: LeadInboxHost) {
                 record.id !== assignment.id
               )
                 throw new Error("Project assignment changed before delivery");
-              nameSessionIfUnset(pi, ctx, `Lead · ${assignment.branch}`);
+              await nameSessionIfUnset(pi, `Lead · ${assignment.branch}`);
               resultBindings = assignment.resultBindings;
               payload = {
                 ...(message as object),
@@ -10937,8 +10933,8 @@ export type LeadEntryEffects = {
   clearChiefStartPreflight(): void;
   resetSupervisionSnapshot(): void;
   removePeerPresence(): void;
-  reconcileRoleTools(): void;
-  restoreLeadTools(): void;
+  reconcileRoleTools(): Promise<void>;
+  restoreLeadTools(): Promise<void> | void;
   persistRole(role: SessionRole): void;
   persistCoordinatorState(): void;
   coordinationHealthy(): boolean;
@@ -10951,21 +10947,24 @@ export type LeadEntryEffects = {
   appendRoleError(ctx: ExtensionContext, error: unknown): void;
 };
 
-function captureLifecycleError(operation: () => void, prior: unknown): unknown {
+async function captureLifecycleError(
+  operation: () => void | Promise<void>,
+  prior: unknown,
+): Promise<unknown> {
   try {
-    operation();
+    await operation();
   } catch (error) {
     return prior ?? error;
   }
   return prior;
 }
 
-export function enterLeadRole(
+export async function enterLeadRole(
   state: LeadRuntimeState,
   effects: LeadEntryEffects,
   ctx?: ExtensionContext,
   persist = true,
-): void {
+): Promise<void> {
   effects.advancePresenceGeneration();
   let lifecycleError: unknown;
   const chief = state.chiefLease;
@@ -10973,11 +10972,11 @@ export function enterLeadRole(
   const manager = state.managerLease;
   state.managerLease = undefined;
   effects.clearChiefStartPreflight();
-  lifecycleError = captureLifecycleError(
+  lifecycleError = await captureLifecycleError(
     () => chief?.release(),
     lifecycleError,
   );
-  lifecycleError = captureLifecycleError(
+  lifecycleError = await captureLifecycleError(
     () => manager?.release(),
     lifecycleError,
   );
@@ -10986,21 +10985,21 @@ export function enterLeadRole(
   state.roleSuspended = false;
   if (ctx && effects.coordinationHealthy()) effects.schedulePeerPresence(ctx);
   try {
-    effects.reconcileRoleTools();
+    await effects.reconcileRoleTools();
   } catch (error) {
     lifecycleError ??= error;
-    lifecycleError = captureLifecycleError(
+    lifecycleError = await captureLifecycleError(
       effects.restoreLeadTools,
       lifecycleError,
     );
   }
   if (persist)
-    lifecycleError = captureLifecycleError(
+    lifecycleError = await captureLifecycleError(
       () => effects.persistRole("lead"),
       lifecycleError,
     );
   if (effects.coordinationHealthy())
-    lifecycleError = captureLifecycleError(
+    lifecycleError = await captureLifecycleError(
       effects.persistCoordinatorState,
       lifecycleError,
     );
@@ -11008,13 +11007,13 @@ export function enterLeadRole(
   if (ctx) effects.publishLeadRole(ctx, "inactive", state.chiefModeGeneration);
 }
 
-export function enterChiefRole(
+export async function enterChiefRole(
   state: LeadRuntimeState,
   effects: LeadEntryEffects,
   ctx: ExtensionContext,
   lease: ChiefLease,
   generation: number,
-): void {
+): Promise<void> {
   effects.advancePresenceGeneration();
   effects.removePeerPresence();
   state.chiefLease = lease;
@@ -11023,7 +11022,7 @@ export function enterChiefRole(
   state.chiefMode = "active";
   try {
     effects.persistRole("chief");
-    effects.reconcileRoleTools();
+    await effects.reconcileRoleTools();
   } catch (error) {
     state.chiefMode = "inactive";
     state.chiefLease = undefined;
@@ -11033,11 +11032,11 @@ export function enterChiefRole(
   effects.publishLeadRole(ctx, "active", generation);
 }
 
-export function enterSuspendedRole(
+export async function enterSuspendedRole(
   state: LeadRuntimeState,
   effects: LeadEntryEffects,
   ctx?: ExtensionContext,
-): void {
+): Promise<void> {
   effects.advancePresenceGeneration();
   let lifecycleError: unknown;
   const chief = state.chiefLease;
@@ -11047,15 +11046,15 @@ export function enterSuspendedRole(
   state.chiefMode = "suspended";
   state.roleSuspended = true;
   effects.removePeerPresence();
-  lifecycleError = captureLifecycleError(
+  lifecycleError = await captureLifecycleError(
     () => chief?.release(),
     lifecycleError,
   );
-  lifecycleError = captureLifecycleError(
+  lifecycleError = await captureLifecycleError(
     effects.reconcileRoleTools,
     lifecycleError,
   );
-  lifecycleError = captureLifecycleError(
+  lifecycleError = await captureLifecycleError(
     () => effects.persistRole("chief"),
     lifecycleError,
   );
@@ -11128,7 +11127,7 @@ export async function resolveLeadControllerRole(
     verifyManagerIdentity(
       descriptor: import("./supervision.ts").ManagerDescriptor,
     ): Promise<unknown>;
-    unresolvedManagerLease(): void;
+    unresolvedManagerLease(): Promise<void>;
     activationGuard(sessionId: string, role: "Chief" | "Manager"): void;
     persistLeadRole: () => void;
     isCurrent(): boolean;
@@ -11192,7 +11191,7 @@ export async function resolveLeadControllerRole(
           state.managerLease = lease;
           state.controllerRole = "manager";
           state.roleSuspended = true;
-          deps.unresolvedManagerLease();
+          await deps.unresolvedManagerLease();
           throw releaseError;
         }
         throw error;
@@ -11208,7 +11207,7 @@ export async function resolveLeadControllerRole(
           state.managerLease = lease;
           state.controllerRole = "manager";
           state.roleSuspended = true;
-          deps.unresolvedManagerLease();
+          await deps.unresolvedManagerLease();
           throw error;
         }
         return;
@@ -11220,7 +11219,7 @@ export async function resolveLeadControllerRole(
           state.managerLease = lease;
           state.controllerRole = "manager";
           state.roleSuspended = true;
-          deps.unresolvedManagerLease();
+          await deps.unresolvedManagerLease();
           throw error;
         }
         return;
@@ -11828,7 +11827,7 @@ export function createLeadRoleTransitions(
     ): string | undefined => {
       if (!assignment.piSessionFile) return undefined;
       try {
-        const session = host.SessionManager.open(assignment.piSessionFile);
+        const session = inspectSessionFile(assignment.piSessionFile);
         if (session.getSessionId() !== assignment.id) return undefined;
         return resolve(session.getCwd());
       } catch {
@@ -12082,11 +12081,11 @@ export function createLeadRoleTransitions(
     host.advancePeerPresenceGeneration();
     host.clearChiefStartPreflight();
   };
-  const shutdownRole = (): void => {
+  const shutdownRole = async (): Promise<void> => {
     state.chiefModeGeneration++;
     if (host.controllerScope?.kind !== "root") return;
     if (state.chiefMode === "active") {
-      host.enterSuspended(state.leadContext);
+      await host.enterSuspended(state.leadContext);
     } else if (state.controllerRole === "manager") {
       host.removePeerPresence();
       try {
@@ -12128,7 +12127,7 @@ export function createLeadRoleTransitions(
             error,
           );
       }
-      host.enterLead(undefined, false);
+      await host.enterLead(undefined, false);
     }
   };
   const beginSessionRole = (ctx: ExtensionContext) => {
@@ -12204,12 +12203,12 @@ export function createLeadRoleTransitions(
         host.isCurrentChief(ctx);
       try {
         host.commitSupervisoryProfile(replacement);
-        host.reconcileRoleTools();
+        await host.reconcileRoleTools();
       } catch (error) {
         if (stillCurrent()) {
           host.commitSupervisoryProfile(previous);
           try {
-            host.pi.setActiveTools(previousTools);
+            await host.pi.setActiveTools(previousTools);
           } catch {}
         }
         throw error;
@@ -12265,7 +12264,7 @@ export function createLeadRoleTransitions(
               invalidationError,
             );
           }
-          host.enterSuspended(ctx);
+          await host.enterSuspended(ctx);
         } else if (ctx.mode === "tui" && ctx.hasUI)
           await host.focusExistingChief(ctx);
         return "A chief is already active in this herdr runtime.";
@@ -12290,7 +12289,7 @@ export function createLeadRoleTransitions(
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       host.commitSupervisoryProfile(profile);
-      host.enterChief(ctx, lease, generation);
+      await host.enterChief(ctx, lease, generation);
       enteredChief = true;
       host.clearNormalUI();
       host.clearSupervisionUI();
@@ -12311,10 +12310,10 @@ export function createLeadRoleTransitions(
       host.commitSupervisoryProfile(undefined);
       host.clearChiefStartPreflight();
       try {
-        host.reconcileRoleTools();
+        await host.reconcileRoleTools();
       } catch {
         try {
-          host.pi.setActiveTools(
+          await host.pi.setActiveTools(
             host.executionTools?.() ??
               host.normalizeLeadTools(host.getLeadTools() ?? []),
           );
@@ -12326,7 +12325,7 @@ export function createLeadRoleTransitions(
             restoreError,
           );
           try {
-            host.pi.setActiveTools(host.normalizeLeadTools([]));
+            await host.pi.setActiveTools(host.normalizeLeadTools([]));
           } catch (failClosedError) {
             host.appendDurableError(
               host.pi,
@@ -12381,12 +12380,12 @@ export function createLeadRoleTransitions(
         state.managerLease === lease;
       try {
         host.commitSupervisoryProfile(replacement);
-        host.reconcileRoleTools();
+        await host.reconcileRoleTools();
       } catch (error) {
         if (stillCurrent()) {
           host.commitSupervisoryProfile(previous);
           try {
-            host.pi.setActiveTools(previousTools);
+            await host.pi.setActiveTools(previousTools);
           } catch {}
         }
         throw error;
@@ -12439,7 +12438,7 @@ export function createLeadRoleTransitions(
         throw new Error("Manager coordination state could not be persisted");
       if (!(await host.remoteChiefAgent(ctx, lease.descriptor)))
         throw new Error("Manager could not be verified in Herdr");
-      host.reconcileRoleTools();
+      await host.reconcileRoleTools();
       host.clearNormalUI();
       host.startSupervisionUI(ctx);
       host.advancePeerPresenceGeneration();
@@ -12463,7 +12462,7 @@ export function createLeadRoleTransitions(
         host.persistRole("lead");
       } catch {}
       host.persistLeadCoordination();
-      host.reconcileRoleTools();
+      await host.reconcileRoleTools();
       host.clearSupervisionUI();
       host.startNormalUI(ctx);
       throw error;
@@ -12494,7 +12493,7 @@ export function createLeadRoleTransitions(
           "pi_herdsman_role_error",
           rollbackError,
         );
-        host.reconcileRoleTools();
+        await host.reconcileRoleTools();
       }
       throw error;
     }
@@ -12506,12 +12505,12 @@ export function createLeadRoleTransitions(
       state.managerLease = undefined;
       state.roleSuspended = true;
       host.markLeadCoordinationUnhealthy(ctx);
-      host.reconcileRoleTools();
+      await host.reconcileRoleTools();
       throw error;
     }
     state.managerLease = undefined;
     host.commitSupervisoryProfile(undefined);
-    host.reconcileRoleTools();
+    await host.reconcileRoleTools();
     host.clearSupervisionUI();
     host.startNormalUI(ctx);
     if (host.coordinationHealthy()) await host.schedulePeerPresence(ctx);
@@ -12531,7 +12530,7 @@ export function createLeadRoleTransitions(
         state.chiefModeGeneration,
       );
     await host.restoreLeadExecution?.(ctx);
-    host.enterLead(ctx);
+    await host.enterLead(ctx);
     await host.waitForPeerPresence();
     if (process.env.HERDR_SOCKET_PATH) host.startChiefInbox(ctx);
     host.startNormalUI?.(ctx);
@@ -12577,10 +12576,10 @@ export function createLeadRoleTransitions(
           "pi_herdsman_role_error",
           transitionError,
         );
-        host.enterLead(ctx, false);
+        await host.enterLead(ctx, false);
       }
-    } else host.enterLead(ctx, false);
-    host.pi.setActiveTools(
+    } else await host.enterLead(ctx, false);
+    await host.pi.setActiveTools(
       host.pi
         .getActiveTools()
         .filter((name: string) => !host.supervisorTools.includes(name)),
@@ -12597,14 +12596,15 @@ export function createLeadRoleTransitions(
     if (branchRole?.role === "chief") {
       if (!host.getLeadTools()) host.setLeadTools([...branchRole.leadTools]);
       if (state.chiefMode === "active" && host.isCurrentChief(ctx)) {
-        host.reconcileRoleTools();
+        await host.reconcileRoleTools();
         return;
       }
       if (state.chiefMode === "active") await deactivateChief(ctx);
       try {
         await host.activateChief(ctx, true);
       } catch (error) {
-        if (error instanceof ProcessLockOccupiedError) host.enterSuspended(ctx);
+        if (error instanceof ProcessLockOccupiedError)
+          await host.enterSuspended(ctx);
         else {
           host.appendDurableError(
             host.pi,
@@ -12614,7 +12614,7 @@ export function createLeadRoleTransitions(
           );
           if (state.chiefActivationRollback)
             state.chiefActivationRollback = false;
-          else host.enterLead(ctx);
+          else await host.enterLead(ctx);
         }
       }
       return;
@@ -12622,9 +12622,9 @@ export function createLeadRoleTransitions(
     if (!host.getLeadTools())
       host.setLeadTools(host.normalizeLeadTools(host.pi.getActiveTools()));
     if (state.chiefMode !== "inactive") await deactivateChief(ctx);
-    else host.reconcileRoleTools();
+    else await host.reconcileRoleTools();
   };
-  const reconcileRoleTools = (): void => {
+  const reconcileRoleTools = async (): Promise<void> => {
     if (host.controllerScope?.kind !== "root") return;
     try {
       host.captureInheritedTools?.();
@@ -12655,7 +12655,7 @@ export function createLeadRoleTransitions(
           ),
         );
         if (!sameToolSelection(current, permitted))
-          host.pi.setActiveTools(permitted);
+          await host.pi.setActiveTools(permitted);
         return;
       }
       host.setInheritedProjection?.(undefined);
@@ -12694,12 +12694,12 @@ export function createLeadRoleTransitions(
       const management = state.leadContext
         ? host.ownedAgentManagementTools(state.leadContext)
         : [];
-      host.pi.setActiveTools([...new Set([...baseline, ...management])]);
+      await host.pi.setActiveTools([...new Set([...baseline, ...management])]);
       return;
     }
     if (activeLeadRole(state) === "chief") {
       host.setInheritedProjection?.(undefined);
-      host.pi.setActiveTools(
+      await host.pi.setActiveTools(
         (state.leadContext &&
           host.supervisoryTools(state.leadContext, "chief")) ?? [
           ...host.chiefTools,
@@ -12714,7 +12714,7 @@ export function createLeadRoleTransitions(
         ...host.managerTools,
       ];
       if (!sameToolSelection(host.pi.getActiveTools(), managerTools))
-        host.pi.setActiveTools(managerTools);
+        await host.pi.setActiveTools(managerTools);
       return;
     }
     const current = host.pi.getActiveTools();
@@ -12722,7 +12722,7 @@ export function createLeadRoleTransitions(
       ? [...host.getLeadTools()!]
       : host.normalizeBaseTools(current);
     const next = host.executionTools?.() ?? host.normalizeLeadTools(source);
-    if (!sameToolSelection(current, next)) host.pi.setActiveTools(next);
+    if (!sameToolSelection(current, next)) await host.pi.setActiveTools(next);
     const projection = host.inheritedProjection?.();
     host.setInheritedProjection?.(
       !state.roleSuspended &&
@@ -12752,9 +12752,9 @@ export function createLeadRoleTransitions(
           coordinationHealthy: host.coordinationHealthy,
           verifyManagerIdentity: (descriptor) =>
             host.remoteChiefAgent(ctx, descriptor),
-          unresolvedManagerLease: () => {
+          unresolvedManagerLease: async () => {
             host.markLeadCoordinationUnhealthy(ctx);
-            reconcileRoleTools();
+            await reconcileRoleTools();
           },
           activationGuard: host.activationGuard,
           persistLeadRole: () => host.persistRole("lead"),
@@ -12791,7 +12791,9 @@ export function createLeadRoleTransitions(
     }
     return resolve(profile);
   };
-  const finalizeOptionalManagerStartup = (ctx: ExtensionContext): void => {
+  const finalizeOptionalManagerStartup = async (
+    ctx: ExtensionContext,
+  ): Promise<void> => {
     if (state.controllerRole !== "manager" || !state.managerLease) return;
     try {
       if (!host.persistLeadCoordination())
@@ -12816,7 +12818,7 @@ export function createLeadRoleTransitions(
           releaseError,
         );
         try {
-          reconcileRoleTools();
+          await reconcileRoleTools();
         } catch (toolsError) {
           host.appendDurableError(
             host.pi,
@@ -12829,7 +12831,7 @@ export function createLeadRoleTransitions(
         return;
       }
       try {
-        reconcileRoleTools();
+        await reconcileRoleTools();
       } catch (toolsError) {
         host.appendDurableError(
           host.pi,
@@ -12852,7 +12854,7 @@ export function createLeadRoleTransitions(
       }
     }
   };
-  const suspendMalformedRole = (ctx: ExtensionContext): void => {
+  const suspendMalformedRole = async (ctx: ExtensionContext): Promise<void> => {
     state.roleSuspended = true;
     try {
       state.managerLease?.release();
@@ -12860,7 +12862,7 @@ export function createLeadRoleTransitions(
       host.appendDurableError(host.pi, ctx, "pi_herdsman_role_error", error);
     }
     state.managerLease = undefined;
-    reconcileRoleTools();
+    await reconcileRoleTools();
   };
   return {
     beginShutdownRole,

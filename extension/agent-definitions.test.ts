@@ -16,7 +16,6 @@ import {
   agentDefinitionDelegationEnabled,
   agentDefinitionMetadata,
   agentDefinitionEnabled,
-  agentLaunchArgs,
   AGENT_COORDINATION_TOOLS,
   discoverAgent,
   discoverAgentDefinitions,
@@ -430,87 +429,6 @@ test("rejects malformed capability fields", () => {
     );
 });
 
-test("selects global and project context independently in native order", () => {
-  const root = mkdtempSync(join(tmpdir(), "pi-herdsman-context-"));
-  const agentDir = join(root, "custom-agent-dir");
-  const project = join(root, "project");
-  const cwd = join(project, "nested");
-  mkdirSync(agentDir);
-  mkdirSync(cwd, { recursive: true });
-  const global = join(agentDir, "AGENTS.md");
-  const outer = join(project, "AGENTS.md");
-  const inner = join(cwd, "AGENTS.md");
-  writeFileSync(global, "Global");
-  writeFileSync(outer, "Outer");
-  writeFileSync(inner, "Inner");
-
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  try {
-    const launch = (
-      name: string,
-      frontmatter: Record<string, string | boolean>,
-    ) =>
-      agentLaunchArgs(
-        { name, path: "/agent.md", frontmatter, body: "Prompt" },
-        { bodyPromptPath: "/prompt", cwd },
-      );
-    const noContext = ["--no-context-files"];
-    const append = (path: string) => ["--append-system-prompt", path];
-    const noSkills = ["--no-skills"];
-
-    assert.deepEqual(launch("agent", {}), [
-      "--append-system-prompt",
-      "/prompt",
-      ...noContext,
-      ...noSkills,
-    ]);
-    assert.deepEqual(launch("delegate", {}), [
-      "--append-system-prompt",
-      "/prompt",
-      ...noSkills,
-    ]);
-    for (const systemPromptMode of ["replace", "append"] as const) {
-      const prompt = [
-        systemPromptMode === "replace"
-          ? "--system-prompt"
-          : "--append-system-prompt",
-        "/prompt",
-      ];
-      for (const [frontmatter, contexts] of [
-        [{ inheritProjectContext: true, inheritGlobalContext: true }, []],
-        [
-          { inheritProjectContext: true, inheritGlobalContext: false },
-          [...noContext, ...append(outer), ...append(inner)],
-        ],
-        [
-          { inheritProjectContext: false, inheritGlobalContext: true },
-          [...noContext, ...append(global)],
-        ],
-        [
-          { inheritProjectContext: false, inheritGlobalContext: false },
-          noContext,
-        ],
-      ] as const)
-        assert.deepEqual(
-          launch("agent", { ...frontmatter, systemPromptMode }),
-          [...prompt, ...contexts, ...noSkills],
-        );
-    }
-  } finally {
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-  }
-});
-
-test("managed launches retain the generic active-agent interoperability marker", () => {
-  const args = agentLaunchArgs(
-    { name: "reviewer", path: "/agent.md", frontmatter: {}, body: "" },
-    { managedAgent: true },
-  );
-  assert.ok(args.includes('<active_agent name="reviewer"/>'));
-});
-
 test("discovers the five portable bundled definitions without a user agents directory", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-herdsman-agents-"));
   assert.deepEqual(
@@ -538,22 +456,6 @@ test("reserves the layered managed Lead definition outside the Agent roster", ()
   );
   assert.equal(bundled.name, "managed-lead");
   assert.deepEqual(bundled.frontmatter.tools, []);
-  const requiredTools = [
-    ...AGENT_COORDINATION_TOOLS,
-    "message_supervisor",
-    "list_peers",
-    "message_peer",
-  ];
-  const launchArgs = agentLaunchArgs(bundled, {
-    requiredTools,
-    bodyPromptPath: "/prompt",
-  });
-  assert.equal(launchArgs.includes("--no-tools"), true);
-  assert.deepEqual(launchArgs[launchArgs.indexOf("--tools") + 1]?.split(","), [
-    ...requiredTools,
-    "mcp__",
-  ]);
-  assert.equal(launchArgs[launchArgs.indexOf("--exclude-tools") + 1], "mcp__");
   assert.equal(bundled.frontmatter.systemPromptMode, "append");
   assert.equal(bundled.frontmatter.inheritProjectContext, true);
   assert.equal(bundled.frontmatter.inheritGlobalContext, true);
@@ -915,21 +817,9 @@ test("bundled definitions carry portable capabilities and role contracts", () =>
   const definitions = withPiAgentDir(root, () => discoverAgentDefinitions());
   const expectedTools = new Map([
     ["implementer", ["read", "bash", "edit", "write"]],
-    [
-      "researcher",
-      [
-        "read",
-        "ls",
-        "find",
-        "grep",
-        "web_search",
-        "fetch_content",
-        "get_search_content",
-        "source_check",
-      ],
-    ],
-    ["reviewer", ["read", "ls", "find", "grep"]],
-    ["scout", ["read", "ls", "find", "grep"]],
+    ["researcher", ["read", "glob", "grep", "web_search"]],
+    ["reviewer", ["read", "glob", "grep"]],
+    ["scout", ["read", "glob", "grep"]],
     ["generalist", ["read", "bash", "edit", "write"]],
   ]);
   const expectedDescriptions = new Map([
@@ -968,11 +858,6 @@ test("bundled definitions carry portable capabilities and role contracts", () =>
   for (const definition of definitions) {
     assert.equal(definition.frontmatter.systemPromptMode, "append");
     assert.notEqual(definition.body.trim(), "");
-    const launchArgs = agentLaunchArgs(definition, {
-      bodyPromptPath: "/tmp/bundled-agent-prompt.md",
-    });
-    assert.ok(launchArgs.includes("--append-system-prompt"));
-    assert.equal(launchArgs.includes("--system-prompt"), false);
     assert.equal(
       definition.frontmatter.description,
       expectedDescriptions.get(definition.name),
@@ -1020,77 +905,6 @@ test("bundled definitions carry portable capabilities and role contracts", () =>
     definitions.filter((definition) => required.has(definition.name)).length,
     5,
   );
-});
-
-test("enforces read-only managed launch policies and reviewer leaf projection", () => {
-  const root = mkdtempSync(join(tmpdir(), "pi-herdsman-audit-policy-"));
-  const expected = new Map([
-    ["scout", ["read", "ls", "find", "grep", "ask_owner"]],
-    [
-      "researcher",
-      [
-        "read",
-        "ls",
-        "find",
-        "grep",
-        "web_search",
-        "fetch_content",
-        "get_search_content",
-        "source_check",
-        "ask_owner",
-      ],
-    ],
-    [
-      "reviewer",
-      ["read", "ls", "find", "grep", ...AGENT_COORDINATION_TOOLS, "ask_owner"],
-    ],
-  ]);
-  const forbidden = ["bash", "powershell", "edit", "write"];
-
-  withPiAgentDir(root, () => {
-    for (const [name, tools] of expected) {
-      const definition = projectAgentDefinition(
-        discoverAgent(name),
-        "delegating",
-      );
-      const args = agentLaunchArgs(definition, {
-        bodyPromptPath: "/tmp/prompt.txt",
-        cwd: process.cwd(),
-        managedAgent: true,
-      });
-      const toolsIndex = args.indexOf("--tools");
-      assert.notEqual(toolsIndex, -1);
-      assert.deepEqual(args[toolsIndex + 1].split(","), [...tools, "mcp__"]);
-      const launchedTools = args.flatMap((arg) => arg.split(","));
-      for (const tool of forbidden)
-        assert.equal(launchedTools.includes(tool), false);
-      assert.equal(args.includes("npm:pi-web-access"), false);
-      if (name === "researcher") {
-        assert.equal(definition.frontmatter.noExtensions, undefined);
-        assert.equal(args.includes("--no-extensions"), false);
-      } else assert.equal(args.includes("--no-extensions"), true);
-    }
-
-    const reviewer = projectAgentDefinition(discoverAgent("reviewer"), "leaf");
-    const args = agentLaunchArgs(reviewer, {
-      bodyPromptPath: "/tmp/prompt.txt",
-      cwd: process.cwd(),
-      managedAgent: true,
-    });
-    const toolsIndex = args.indexOf("--tools");
-    assert.deepEqual(args[toolsIndex + 1].split(","), [
-      "read",
-      "ls",
-      "find",
-      "grep",
-      "ask_owner",
-      "mcp__",
-    ]);
-    assert.equal(
-      args.flatMap((arg) => arg.split(",")).includes("agent"),
-      false,
-    );
-  });
 });
 
 test("does not bundle the operator-local MCP runner", () => {
@@ -1246,50 +1060,6 @@ test("project discovery tolerates a missing directory and rejects a file", () =>
       /agent directory is not a directory/,
     );
   });
-});
-
-test("project approval is emitted only when requested", () => {
-  const agent = { name: "test", path: "test", frontmatter: {}, body: "" };
-  assert.deepEqual(agentLaunchArgs(agent, {}).includes("--approve"), false);
-  assert.deepEqual(
-    agentLaunchArgs(agent, { approveProject: true }).includes("--approve"),
-    true,
-  );
-});
-
-test("preserves role-required tools through native allowlists and exclusions", () => {
-  const definition = {
-    name: "managed-role",
-    path: "/managed-role.md",
-    frontmatter: {
-      tools: ["read"],
-      excludeTools: ["message_supervisor", "write"],
-    },
-    body: "",
-  };
-  const args = agentLaunchArgs(definition, {
-    requiredTools: ["message_supervisor", "list_peers"],
-  });
-  const tools = args.indexOf("--tools");
-  assert.deepEqual(args[tools + 1].split(","), [
-    "read",
-    "message_supervisor",
-    "list_peers",
-    "mcp__",
-  ]);
-  const excluded = args.indexOf("--exclude-tools");
-  assert.equal(args[excluded + 1], "write,mcp__");
-
-  const closed = agentLaunchArgs(
-    {
-      ...definition,
-      frontmatter: { noTools: true, tools: [] },
-    },
-    { requiredTools: ["message_supervisor"] },
-  );
-  assert.equal(closed.includes("--no-tools"), true);
-  const required = closed.indexOf("--tools");
-  assert.equal(closed[required + 1], "message_supervisor,mcp__");
 });
 
 test("composes all definition layers with provenance and whole-array replacement", () => {
@@ -1539,38 +1309,6 @@ test("keeps a bundled parent valid when its child is overridden", () => {
   );
 });
 
-test("transports complex prompts through a private temporary file", () => {
-  const body = "line 1\nquotes \" ' $ `\nUnicode: café 🦊\nline 4";
-  const [promptPath] = writePrivatePromptSnapshots([body]);
-  try {
-    assert.equal(readFileSync(promptPath, "utf8"), body);
-    assertPosixMode(promptPath, 0o600);
-    const tempRoot = join(
-      tmpdir(),
-      `pi-herdsman-${process.getuid?.() ?? "user"}`,
-    );
-    assertPosixMode(tempRoot, 0o700);
-    assertPosixMode(join(tempRoot, "prompts"), 0o700);
-    const launch = agentLaunchArgs(
-      {
-        name: "delegate",
-        path: "/agents/delegate.md",
-        frontmatter: { name: "delegate", systemPromptMode: "append" },
-        body,
-      },
-      { bodyPromptPath: promptPath },
-    );
-    assert.deepEqual(launch, [
-      "--append-system-prompt",
-      promptPath,
-      "--no-skills",
-    ]);
-  } finally {
-    unlinkSync(promptPath);
-  }
-  assert.throws(() => statSync(promptPath), /ENOENT/);
-});
-
 test("writes ordered private prompt snapshots with private permissions", () => {
   const paths = writePrivatePromptSnapshots(["body", "append"]);
   try {
@@ -1582,110 +1320,6 @@ test("writes ordered private prompt snapshots with private permissions", () => {
   } finally {
     for (const path of paths) unlinkSync(path);
   }
-});
-
-test("builds exact Pi capability launch arguments", () => {
-  const agent = {
-    name: "delegate",
-    path: "/agents/delegate.md",
-    frontmatter: {
-      name: "delegate",
-      model: "model-a",
-      thinking: false,
-      inheritSkills: false,
-      fallbackModels: true,
-      noTools: true,
-      noBuiltinTools: false,
-      tools: ["read", " grep "],
-      excludeTools: ["bash", "write"],
-      noSkills: false,
-      skills: ["./skills/local.md", "/skills/shared.md"],
-      noExtensions: true,
-      extensions: ["./extensions/local.ts", "/extensions/shared.ts"],
-    },
-    body: "Use this prompt",
-  };
-  const promptPath = "/tmp/prompt.txt";
-  assert.deepEqual(agentLaunchArgs(agent, { bodyPromptPath: promptPath }), [
-    "--model",
-    "model-a",
-    "--thinking",
-    "off",
-    "--append-system-prompt",
-    promptPath,
-    "--no-tools",
-    "--tools",
-    "read,grep,mcp__",
-    "--exclude-tools",
-    "bash,write,mcp__",
-    "--skill",
-    "./skills/local.md",
-    "--skill",
-    "/skills/shared.md",
-    "--no-extensions",
-    "--extension",
-    "./extensions/local.ts",
-    "--extension",
-    "/extensions/shared.ts",
-  ]);
-});
-
-test("drops --no-extensions when the child's model comes from an extension", () => {
-  const definition = {
-    name: "scout",
-    path: "/agents/scout.md",
-    frontmatter: { name: "scout", noExtensions: true },
-    body: "",
-  };
-  const foreign = agentLaunchArgs(definition, {
-    modelDecision: {
-      kind: "use",
-      model: "acme/reasoning/mini",
-      extensionDiscovery: true,
-    },
-  });
-  assert.deepEqual(foreign.slice(0, 2), ["--model", "acme/reasoning/mini"]);
-  assert.equal(foreign.includes("--no-extensions"), false);
-
-  const lean = agentLaunchArgs(definition, {
-    modelDecision: {
-      kind: "use",
-      model: "vendor-one/chat-large",
-      extensionDiscovery: false,
-    },
-  });
-  assert.deepEqual(lean.slice(0, 2), ["--model", "vendor-one/chat-large"]);
-  assert.equal(lean.includes("--no-extensions"), true);
-});
-
-test("resolves model and thinking fallbacks independently at launch", () => {
-  const launch = (frontmatter: Frontmatter, options = {}) =>
-    agentLaunchArgs(
-      { name: "agent", path: "/agent.md", frontmatter, body: "" },
-      {
-        inheritedModel: "inherited/model",
-        inheritedThinking: "high",
-        ...options,
-      },
-    );
-  const suffix = ["--no-context-files", "--no-skills"];
-  for (const [frontmatter, settings] of [
-    [{}, ["--model", "inherited/model", "--thinking", "high"]],
-    [
-      { model: "explicit/model" },
-      ["--model", "explicit/model", "--thinking", "high"],
-    ],
-    [{ thinking: "low" }, ["--model", "inherited/model", "--thinking", "low"]],
-    [{ thinking: false }, ["--model", "inherited/model", "--thinking", "off"]],
-  ] as const)
-    assert.deepEqual(launch(frontmatter), [...settings, ...suffix]);
-  assert.deepEqual(
-    agentLaunchArgs(
-      { name: "agent", path: "/agent.md", frontmatter: {}, body: "" },
-      {},
-    ),
-    ["--no-context-files", "--no-skills"],
-  );
 });
 
 test("bundled definitions leave execution settings to the controller", () => {
@@ -1705,47 +1339,6 @@ test("bundled definitions leave execution settings to the controller", () => {
   });
 });
 
-test("appends the shared prompt after context additions", () => {
-  assert.deepEqual(
-    agentLaunchArgs(
-      {
-        name: "agent",
-        path: "/agent.md",
-        frontmatter: { systemPromptMode: "replace" },
-        body: "body",
-      },
-      {
-        bodyPromptPath: "/body",
-        sharedPromptPath: "/shared",
-      },
-    ),
-    [
-      "--system-prompt",
-      "/body",
-      "--no-context-files",
-      "--append-system-prompt",
-      "/shared",
-      "--no-skills",
-    ],
-  );
-});
-
-test("requires a body prompt path for body-bearing agents", () => {
-  assert.throws(
-    () =>
-      agentLaunchArgs(
-        {
-          name: "agent",
-          path: "/agent.md",
-          frontmatter: {},
-          body: "body",
-        },
-        {},
-      ),
-    /agent agent has a body but no bodyPromptPath was provided/,
-  );
-});
-
 test("bundled generalist definition retains its declared tool policy", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-herdsman-agent-policy-"));
   const generalist = withPiAgentDir(root, () => discoverAgent("generalist"));
@@ -1756,162 +1349,6 @@ test("bundled generalist definition retains its declared tool policy", () => {
     "edit",
     "write",
   ]);
-  const args = agentLaunchArgs(generalist, {
-    bodyPromptPath: "/tmp/prompt.txt",
-    cwd: process.cwd(),
-    managedAgent: true,
-  });
-  const tools = args.indexOf("--tools");
-  assert.notEqual(tools, -1);
-  assert.equal(
-    args[tools + 1],
-    [
-      "read",
-      "bash",
-      "edit",
-      "write",
-      ...AGENT_COORDINATION_TOOLS,
-      "ask_owner",
-      "mcp__",
-    ].join(","),
-  );
-});
-
-test("managed launch policy always includes ask_owner", () => {
-  const launch = (frontmatter: Record<string, unknown>) =>
-    agentLaunchArgs(
-      { name: "agent", path: "/agent.md", frontmatter, body: "" },
-      {
-        bodyPromptPath: "/prompt",
-        cwd: process.cwd(),
-        managedAgent: true,
-      },
-    );
-  const cases = [
-    [
-      { tools: ["read", " ask_owner", "read"] },
-      ["--tools", "read,ask_owner,mcp__", "--exclude-tools", "mcp__"],
-    ],
-    [
-      { noTools: true },
-      ["--no-tools", "--tools", "ask_owner,mcp__", "--exclude-tools", "mcp__"],
-    ],
-    [
-      { noTools: true, tools: ["read"] },
-      [
-        "--no-tools",
-        "--tools",
-        "read,ask_owner,mcp__",
-        "--exclude-tools",
-        "mcp__",
-      ],
-    ],
-    [
-      { tools: [] },
-      ["--no-tools", "--tools", "ask_owner,mcp__", "--exclude-tools", "mcp__"],
-    ],
-    [
-      { noBuiltinTools: true, excludeTools: ["write", "ask_owner"] },
-      ["--no-builtin-tools", "--exclude-tools", "write"],
-    ],
-    [{}, []],
-  ] as const;
-  for (const [frontmatter, expected] of cases) {
-    const args = launch(frontmatter);
-    if (expected.length) {
-      const start = args.indexOf(expected[0]);
-      assert.notEqual(start, -1);
-      assert.deepEqual(args.slice(start, start + expected.length), expected);
-    }
-    assert.equal(
-      args.flatMap((arg) => arg.split(",")).filter((arg) => arg === "ask_owner")
-        .length,
-      expected.some((arg) => arg.split(",").includes("ask_owner")) ? 1 : 0,
-    );
-  }
-  const root = mkdtempSync(join(tmpdir(), "pi-herdsman-agent-standalone-"));
-  const standalone = withPiAgentDir(root, () => discoverAgent("generalist"));
-  assert.match(
-    standalone.path.split(sep).join("/"),
-    /agent-definitions\/generalist\.md$/,
-  );
-  assert.equal(
-    agentLaunchArgs(standalone, {
-      bodyPromptPath: "/prompt",
-      cwd: process.cwd(),
-      managedAgent: true,
-    })
-      .flatMap((arg) => arg.split(","))
-      .filter((arg) => arg === "ask_owner").length,
-    1,
-  );
-});
-
-test("keeps omitted tools default and closes an explicit empty allowlist", () => {
-  const launch = (frontmatter: Record<string, unknown>) =>
-    agentLaunchArgs(
-      { name: "agent", path: "/agent.md", frontmatter, body: "" },
-      { bodyPromptPath: "/prompt" },
-    );
-  assert.deepEqual(launch({}), ["--no-context-files", "--no-skills"]);
-  assert.deepEqual(launch({ tools: [] }), [
-    "--no-context-files",
-    "--no-tools",
-    "--no-skills",
-  ]);
-});
-
-test("applies explicit noSkills before inheritSkills defaults", () => {
-  const launch = (frontmatter: Record<string, string | boolean>) =>
-    agentLaunchArgs(
-      { name: "agent", path: "/agent.md", frontmatter, body: "" },
-      { bodyPromptPath: "/prompt" },
-    );
-  assert.deepEqual(launch({}), ["--no-context-files", "--no-skills"]);
-  assert.deepEqual(launch({ inheritSkills: true }), ["--no-context-files"]);
-  assert.deepEqual(launch({ inheritSkills: "true" }), [
-    "--no-context-files",
-    "--no-skills",
-  ]);
-  assert.deepEqual(launch({ inheritSkills: true, noSkills: true }), [
-    "--no-context-files",
-    "--no-skills",
-  ]);
-  assert.deepEqual(launch({ inheritSkills: false, noSkills: false }), [
-    "--no-context-files",
-  ]);
-});
-
-test("passes native capability combinations through to Pi", () => {
-  assert.deepEqual(
-    agentLaunchArgs(
-      {
-        name: "agent",
-        path: "/agent.md",
-        frontmatter: {
-          inheritProjectContext: true,
-          noTools: true,
-          noBuiltinTools: true,
-          noSkills: true,
-          skills: ["explicit-skill"],
-          noExtensions: true,
-          extensions: ["explicit-extension"],
-        },
-        body: "",
-      },
-      { bodyPromptPath: "/prompt" },
-    ),
-    [
-      "--no-tools",
-      "--no-builtin-tools",
-      "--no-skills",
-      "--skill",
-      "explicit-skill",
-      "--no-extensions",
-      "--extension",
-      "explicit-extension",
-    ],
-  );
 });
 
 test("preserves current definition metadata", () => {
@@ -2100,81 +1537,6 @@ test("keeps ordinary tool metadata separate from managed role tools", () => {
     }),
     { name: "parent", agents: ["child"], tools: ["read"] },
   );
-  const make = (frontmatter: Frontmatter) =>
-    agentLaunchArgs(
-      {
-        name: "parent",
-        path: "/parent.md",
-        frontmatter,
-        body: "",
-      },
-      { managedAgent: true },
-    );
-  const roleTools = [...AGENT_COORDINATION_TOOLS, "ask_owner"];
-  const leafTools = ["ask_owner"];
-  const toolArgs = (frontmatter: Frontmatter) => {
-    const args = make(frontmatter);
-    const index = args.indexOf("--tools");
-    return index < 0 ? [] : args.slice(index, index + 2);
-  };
-  assert.deepEqual(toolArgs({ agents: ["child"], tools: ["read"] }), [
-    "--tools",
-    ["read", ...roleTools, "mcp__"].join(","),
-  ]);
-  assert.deepEqual(
-    toolArgs({ agents: ["child"], noTools: true, tools: ["read"] }),
-    ["--tools", ["read", ...leafTools, "mcp__"].join(",")],
-  );
-  assert.equal(
-    make({ agents: ["child"], noTools: true, tools: ["read"] }).includes(
-      "--no-tools",
-    ),
-    true,
-  );
-  assert.equal(make({ agents: ["child"] }).includes("--tools"), false);
-  const exclusions = make({
-    agents: ["child"],
-    tools: ["read"],
-    excludeTools: [...AGENT_COORDINATION_TOOLS, "ask_owner", "read"],
-  });
-  const toolsIndex = exclusions.indexOf("--tools");
-  assert.notEqual(toolsIndex, -1);
-  assert.equal(
-    exclusions[toolsIndex + 1],
-    ["read", ...roleTools, "mcp__"].join(","),
-  );
-  const exclusionsIndex = exclusions.indexOf("--exclude-tools");
-  assert.notEqual(exclusionsIndex, -1);
-  assert.deepEqual(exclusions.slice(exclusionsIndex, exclusionsIndex + 2), [
-    "--exclude-tools",
-    "read,mcp__",
-  ]);
-  assert.deepEqual(toolArgs({ agents: ["child"], noTools: true }), [
-    "--tools",
-    [...leafTools, "mcp__"].join(","),
-  ]);
-  assert.equal(
-    make({ agents: ["child"], noTools: true }).includes("--no-tools"),
-    true,
-  );
-  assert.deepEqual(toolArgs({ agents: ["child"], tools: [] }), [
-    "--tools",
-    [...leafTools, "mcp__"].join(","),
-  ]);
-  assert.equal(
-    make({ agents: ["child"], tools: [] }).includes("--no-tools"),
-    true,
-  );
-  assert.deepEqual(toolArgs({ agents: ["child"], tools: ["agent"] }), [
-    "--tools",
-    [...roleTools, "mcp__"].join(","),
-  ]);
-  assert.equal(
-    /(?:^|,)agent(?:,|$)/u.test(
-      toolArgs({ agents: ["child"], tools: ["agent"] })[1],
-    ),
-    false,
-  );
 });
 
 test("projects parent-launched definitions as exact leaf capabilities", () => {
@@ -2200,12 +1562,6 @@ test("projects parent-launched definitions as exact leaf capabilities", () => {
     noExtensions: true,
     extensions: ["./review.ts"],
   });
-  assert.deepEqual(
-    agentLaunchArgs(leaf, { managedAgent: true }).filter(
-      (value) => value === "--tools" || value.includes("ask_owner"),
-    ),
-    ["--tools", "read,bash,ask_owner,mcp__"],
-  );
   const empty = projectAgentDefinition(
     {
       name: "empty",
@@ -2228,15 +1584,6 @@ test("projects parent-launched definitions as exact leaf capabilities", () => {
   );
   assert.deepEqual(legacyToolLeaf.frontmatter.tools, []);
   assert.equal(legacyToolLeaf.frontmatter.noTools, true);
-  assert.deepEqual(
-    agentLaunchArgs(legacyToolLeaf, { managedAgent: true }).filter(
-      (value) =>
-        value === "--no-tools" ||
-        value === "--tools" ||
-        value === "ask_owner,mcp__",
-    ),
-    ["--no-tools", "--tools", "ask_owner,mcp__"],
-  );
   const denied = projectAgentDefinition(
     {
       name: "denied",
@@ -2261,20 +1608,8 @@ test("projects parent-launched definitions as exact leaf capabilities", () => {
     },
     "leaf",
   );
-  assert.deepEqual(
-    agentLaunchArgs(delegationOnlyLeaf, { managedAgent: true }),
-    [
-      "--no-context-files",
-      "--no-tools",
-      "--tools",
-      "ask_owner,mcp__",
-      "--exclude-tools",
-      "mcp__",
-      "--no-skills",
-      "--append-system-prompt",
-      '<active_agent name="parent"/>',
-    ],
-  );
+  assert.deepEqual(delegationOnlyLeaf.frontmatter.tools, []);
+  assert.equal(delegationOnlyLeaf.frontmatter.agents, undefined);
   const omittedToolsLeaf = projectAgentDefinition(
     {
       name: "parent",
@@ -2286,12 +1621,6 @@ test("projects parent-launched definitions as exact leaf capabilities", () => {
   );
   assert.equal(omittedToolsLeaf.frontmatter.agents, undefined);
   assert.equal(omittedToolsLeaf.frontmatter.tools, undefined);
-  assert.equal(
-    agentLaunchArgs(omittedToolsLeaf, { managedAgent: true }).some((name) =>
-      AGENT_COORDINATION_TOOLS.includes(name as never),
-    ),
-    false,
-  );
 });
 
 test("merges effective frontmatter and preserves narrow override mutations", () => {
@@ -2519,141 +1848,5 @@ test("the inherited provider is Pi's resolved provider, not the token's first se
       isForeignProvider: (id) => id === "acme",
     }),
     { kind: "use", model: "solo-chat", extensionDiscovery: true },
-  );
-});
-
-test("closed policies preserve native selectors and protect mandatory tools", () => {
-  const cases: [
-    Frontmatter,
-    string | undefined,
-    string | undefined,
-    boolean,
-  ][] = [
-    [{}, undefined, undefined, false],
-    [{ noBuiltinTools: true }, undefined, undefined, false],
-    [{ tools: ["read"] }, "read,ask_owner,mcp__", "mcp__", false],
-    [{ tools: ["*search"] }, "*search,ask_owner,mcp__", "mcp__", false],
-    [
-      { tools: ["read", "mcp__github__*"] },
-      "read,mcp__github__*,ask_owner",
-      undefined,
-      false,
-    ],
-    [
-      { tools: ["list_mcp_resources"] },
-      "list_mcp_resources,ask_owner,mcp__",
-      "mcp__",
-      false,
-    ],
-    [{ tools: [] }, "ask_owner,mcp__", "mcp__", true],
-    [{ tools: [","] }, "ask_owner,mcp__", "mcp__", true],
-    [{ noTools: true }, "ask_owner,mcp__", "mcp__", true],
-    [{ noTools: true, tools: ["read"] }, "read,ask_owner,mcp__", "mcp__", true],
-    [
-      { tools: ["read"], excludeTools: ["ask_owner"] },
-      "read,ask_owner,mcp__",
-      "mcp__",
-      false,
-    ],
-    [
-      { tools: ["read"], excludeTools: ["write*", "mcp__", "write*"] },
-      "read,ask_owner,mcp__",
-      "write*,mcp__",
-      false,
-    ],
-  ];
-  for (const [frontmatter, tools, excluded, noTools] of cases) {
-    const args = agentLaunchArgs(
-      { name: "policy", path: "/policy.md", body: "", frontmatter },
-      { managedAgent: true },
-    );
-    const value = (flag: string) => {
-      const index = args.indexOf(flag);
-      assert.equal(
-        args.filter((arg) => arg === flag).length,
-        index < 0 ? 0 : 1,
-      );
-      return index < 0 ? undefined : args[index + 1];
-    };
-    assert.equal(value("--tools"), tools);
-    assert.equal(value("--exclude-tools"), excluded);
-    assert.equal(args.includes("--no-tools"), noTools);
-    assert.equal(args.includes("--no-mcp"), false);
-  }
-  for (const tools of [[], [","]]) {
-    const args = agentLaunchArgs(
-      { name: "policy", path: "/policy.md", body: "", frontmatter: { tools } },
-      {},
-    );
-    assert.equal(args.includes("--no-tools"), true);
-    assert.equal(args.includes("--tools"), false);
-  }
-});
-
-test("wildcard exclusions reject mandatory overlap and escape regex syntax", () => {
-  const cases = [
-    {
-      frontmatter: { excludeTools: ["ask_*"] },
-      options: { managedAgent: true },
-      pattern: "ask_*",
-      required: "ask_owner",
-    },
-    {
-      frontmatter: {
-        agents: ["child"],
-        tools: ["read"],
-        excludeTools: ["*_agents"],
-      },
-      options: { managedAgent: true },
-      pattern: "*_agents",
-      required: "list_agents",
-    },
-    {
-      frontmatter: { tools: ["read"], excludeTools: ["list*"] },
-      options: { requiredTools: ["list_peers"] },
-      pattern: "list*",
-      required: "list_peers",
-    },
-    {
-      frontmatter: { excludeTools: ["*"] },
-      options: { managedAgent: true },
-      pattern: "*",
-      required: "ask_owner",
-    },
-    {
-      frontmatter: { excludeTools: ["tool.[x]+?*"] },
-      options: { requiredTools: ["tool.[x]+?name"] },
-      pattern: "tool.[x]+?*",
-      required: "tool.[x]+?name",
-    },
-  ];
-  for (const entry of cases)
-    assert.throws(
-      () =>
-        agentLaunchArgs(
-          {
-            name: "policy",
-            path: "/policy.md",
-            body: "",
-            frontmatter: entry.frontmatter,
-          },
-          entry.options,
-        ),
-      {
-        message: `agent policy excludeTools pattern ${JSON.stringify(entry.pattern)} matches required tool ${JSON.stringify(entry.required)}; required tools cannot be excluded by patterns`,
-      },
-    );
-  const args = agentLaunchArgs(
-    {
-      name: "policy",
-      path: "/policy.md",
-      body: "",
-      frontmatter: { excludeTools: ["ask.?*", "agent", "xask_*"] },
-    },
-    { managedAgent: true },
-  );
-  assert.equal(
-    args[args.indexOf("--exclude-tools") + 1],
-    "ask.?*,agent,xask_*",
   );
 });

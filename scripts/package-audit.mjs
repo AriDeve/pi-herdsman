@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import {
   discoverAndLoadExtensions,
   loadSkillsFromDir,
-} from "@earendil-works/pi-coding-agent";
+} from "@oh-my-pi/pi-coding-agent";
 
 const root = process.cwd();
 const normalize = (path) => path.replace(/^package\//u, "");
@@ -21,7 +21,7 @@ const packed = JSON.parse(
     },
   ),
 );
-const files = packed[0]?.files ?? [];
+const files = Object.values(packed)[0]?.files ?? [];
 const allowed =
   /^(?:package\.json|README\.md|SKILL\.md|LICENSE|docs\/|dist\/|skills\/)/u;
 const expectedRoot = new Set([
@@ -100,13 +100,15 @@ try {
   const { extensions, errors } = await discoverAndLoadExtensions(
     [root],
     isolated,
-    isolated,
+    undefined,
+    undefined,
+    { ambient: false },
   );
 
   if (errors.length)
     throw new Error(
       [
-        "Pi failed to load built package extension:",
+        "OMP failed to load package extension:",
         ...errors.map(({ path, error }) => `${path}: ${error}`),
       ].join("\n"),
     );
@@ -116,16 +118,16 @@ try {
 
   if (loadedEntries.length !== 1 || loadedEntries[0] !== expectedEntry)
     throw new Error(
-      `Pi package load expected ${expectedEntry}, loaded ${JSON.stringify(loadedEntries)}`,
+      `OMP package load expected ${expectedEntry}, loaded ${JSON.stringify(loadedEntries)}`,
     );
 
-  const { skills, diagnostics } = loadSkillsFromDir({
+  const { skills, warnings } = await loadSkillsFromDir({
     dir: resolve(root, "skills"),
-    source: "path",
+    source: "custom:user",
   });
-  if (diagnostics.length)
+  if (warnings.length)
     throw new Error(
-      `Pi failed to load packaged skills: ${diagnostics.map(({ message, path }) => `${path}: ${message}`).join(", ")}`,
+      `OMP failed to load packaged skills: ${warnings.map(({ message, path }) => `${path}: ${message}`).join(", ")}`,
     );
   const expectedSkill = resolve(root, "skills/agent-definitions/SKILL.md");
   if (
@@ -134,7 +136,7 @@ try {
     skills[0]?.filePath !== expectedSkill
   )
     throw new Error(
-      `Pi package load expected skill ${expectedSkill}, loaded ${JSON.stringify(skills.map(({ name, filePath }) => ({ name, filePath })))}`,
+      `OMP package load expected skill ${expectedSkill}, loaded ${JSON.stringify(skills.map(({ name, filePath }) => ({ name, filePath })))}`,
     );
 } finally {
   rmSync(isolated, { recursive: true, force: true });

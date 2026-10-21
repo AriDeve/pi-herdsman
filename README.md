@@ -1,4 +1,4 @@
-# Pi Herdsman 🐏
+# Pi Herdsman for OMP
 
 ![Pi Herdsman: asynchronous Pi subagents and agent fleet orchestration](docs/assets/banner.webp)
 
@@ -7,11 +7,10 @@
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)](https://github.com/boadij/pi-herdsman/actions/workflows/validate.yml)
 [![License](https://img.shields.io/npm/l/pi-herdsman)](LICENSE)
 
-**The orchestration layer between [Pi](https://github.com/earendil-works/pi) and [herdr](https://github.com/herdrdev/herdr).**
+**The orchestration layer between [oh-my-pi](https://github.com/can1357/oh-my-pi) and [herdr](https://github.com/herdrdev/herdr).**
 
-Pi Herdsman turns independent Pi sessions into a coordinated agent system, from
-one background Agent to parallel branch-based project work. Pi owns each
-coding-agent conversation; herdr owns processes, panes, workspaces, and worktree
+This checkout runs OMP sessions, including delegated Agents and managed Leads.
+OMP owns each coding-agent conversation; herdr owns processes, panes, workspaces, and worktree
 placement; Herdsman connects them through delegation, ownership, supervision,
 and project orchestration.
 
@@ -32,27 +31,23 @@ _Realtime live demo of a manager > lead > agent workflow._
 
 ## Quick start
 
-On Linux or macOS, install the released Pi, herdr, and Pi Herdsman stack:
+Requires OMP 18.12.3 or newer and Herdr 0.9.1 or newer. Install this checkout:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/boadij/pi-herdsman/main/install.sh | sh
+npm ci --ignore-scripts
+npm run build
+omp plugin link .
+herdr integration install omp
 ```
 
-See [Getting started](docs/getting-started.md) for the tested runtime baselines
-and how the bootstrap handles newer Pi and herdr versions.
+The `omp.extensions` manifest loads the bundle so parent and child build fingerprints cover the complete runtime.
+The upstream `install.sh` and Docker recipes install Pi, not this OMP checkout.
 
-If you already manage Pi and herdr yourself:
-
-```sh
-pi install npm:pi-herdsman
-herdr integration install pi
-```
-
-Start herdr in your project, then start Pi inside its pane:
+Start Herdr in your project, then start OMP inside its pane:
 
 ```sh
 herdr
-pi
+omp
 ```
 
 Delegate naturally:

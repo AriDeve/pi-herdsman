@@ -91,9 +91,9 @@ authority nor access to Agents owned by supervised Leads. Removing the
 allowlist prevents new delegation but does not abandon Agents already owned by
 that exact session; their applicable ownership and recovery controls remain.
 
-Manager accepts trusted project overlays at `<project>/.pi/agents/manager.md`
+Manager accepts trusted project overlays at `<project>/.omp/agents/manager.md`
 and global overlays at `$PI_CODING_AGENT_DIR/agents/manager.md` (or
-`~/.pi/agent/agents/manager.md`). Chief accepts only global overlays because it
+`~/.omp/agent/agents/manager.md`). Chief accepts only global overlays because it
 is workspace-neutral; a project-local `chief.md` is an error. Both resolve
 when the role activates or is restored. Repeating `/manager` or `/chief`
 refreshes an active profile after validating it; a failed refresh keeps the
@@ -147,9 +147,9 @@ bodyMode: append
 Also require an independent reviewer before accepting implementation output.
 ```
 
-A project override lives at `<project>/.pi/agents/managed-lead.md` and is
+A project override lives at `<project>/.omp/agents/managed-lead.md` and is
 resolved from the delegated worktree when the project is trusted. The global
-override remains `~/.pi/agent/agents/managed-lead.md`.
+override remains `~/.omp/agent/agents/managed-lead.md`.
 
 `managed-lead` is an independent full launch definition, not an extension of
 either ordinary runtime profile. For example, a minimal body customization is:
@@ -431,7 +431,7 @@ managed child; it is shipped at
 For a normal npm Pi installation, reference it explicitly, for example:
 
 ```text
-~/.pi/agent/npm/node_modules/pi-herdsman/dist/integrations/pi-codex-context-sharing.js
+~/.agent-library/extensions/pi-herdsman/dist/integrations/pi-codex-context-sharing.js
 ```
 
 When a managed Agent definition uses `noExtensions: true`, list both PCC and the
@@ -442,8 +442,8 @@ Herdsman adapter in that definition's `extensions`:
 name: shared-worker
 noExtensions: true
 extensions:
-  - "~/.pi/agent/npm/node_modules/@howaboua/pi-codex-conversion/dist/index.js"
-  - "~/.pi/agent/npm/node_modules/pi-herdsman/dist/integrations/pi-codex-context-sharing.js"
+  - "~/.omp/plugins/node_modules/@howaboua/pi-codex-conversion/dist/index.js"
+  - "~/.agent-library/extensions/pi-herdsman/dist/integrations/pi-codex-context-sharing.js"
 ---
 ```
 

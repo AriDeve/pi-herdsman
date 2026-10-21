@@ -116,11 +116,13 @@ realFs.writeFileSync(
 );
 const {
   buildContextEntries: nativeBuildContextEntries,
+  buildSessionContext: nativeBuildSessionContext,
   buildSessionProjection: nativeBuildSessionProjection,
   CURRENT_SESSION_VERSION: nativeCurrentSessionVersion,
   parseFrontmatter: nativeParseFrontmatter,
   parseSessionEntries: nativeParseSessionEntries,
   truncateTail: nativeTruncateTail,
+  loadSkillsFromDir: nativeLoadSkillsFromDir,
 } = await import("@earendil-works/pi-coding-agent");
 after(() => {
   realFs.rmSync(testTmpRoot, { recursive: true, force: true });
@@ -148,6 +150,8 @@ mock.module("node:fs", {
       return realFs.fsyncSync(fd);
     },
     mkdirSync: realFs.mkdirSync,
+    mkdtempSync: realFs.mkdtempSync,
+    symlinkSync: realFs.symlinkSync,
     lstatSync: realFs.lstatSync,
     openSync: (...args: any[]) => {
       return realFs.openSync(...args);
@@ -315,15 +319,20 @@ mock.module("@earendil-works/pi-coding-agent", {
     CONFIG_DIR_NAME: ".pi",
     buildContextEntries: nativeBuildContextEntries,
     buildSessionProjection: nativeBuildSessionProjection,
+    buildSessionContext: nativeBuildSessionContext,
+    discoverSkills: async () => ({ skills: [], warnings: [] }),
+    loadSkillsFromDir: nativeLoadSkillsFromDir,
     CURRENT_SESSION_VERSION: nativeCurrentSessionVersion,
     getAgentDir: () => PI_AGENT_ROOT,
     parseFrontmatter: nativeParseFrontmatter,
     parseSessionEntries: nativeParseSessionEntries,
-    loadProjectContextFiles: ({ cwd }: { cwd: string }) => {
+    discoverContextFiles: async (cwd: string) => {
       projectContextCwds.push(cwd);
       return [];
     },
     SessionManager: {
+      getDefaultSessionDir: (cwd: string) =>
+        join(PI_AGENT_ROOT, "sessions", cwd.replaceAll("/", "-")),
       findById: (cwd: string, id: string) =>
         [...nativeSessions.values()].find(
           (session) => session.id === id && session.cwd === cwd,
@@ -345,7 +354,10 @@ mock.module("@earendil-works/pi-coding-agent", {
         return {
           getSessionId: () => session?.id ?? DEFAULT_PI_SESSION_ID,
           getSessionFile: () => session?.path,
-          getHeader: () => (session ? { cwd: session.cwd } : null),
+          getHeader: () =>
+            session
+              ? { type: "session", id: session.id, cwd: session.cwd }
+              : null,
           getCwd: () => resolve(session?.cwd || process.cwd()),
           getSessionName: () => session?.sessionName,
           getEntries: () =>
@@ -376,6 +388,11 @@ mock.module("@earendil-works/pi-coding-agent", {
         };
       },
     },
+  },
+});
+mock.module("./omp-settings.ts", {
+  namedExports: {
+    readOmpLaunchSettings: async () => ({ disabledExtensions: [], skills: {} }),
   },
 });
 mock.module("@earendil-works/pi-tui", {
@@ -598,6 +615,26 @@ mock.module("typebox", {
   },
 });
 
+// Core orchestration fixtures use the internal lifecycle contract. The native
+// host boundary has dedicated adapter tests and a real OMP smoke check.
+mock.module("./omp-runtime.ts", {
+  namedExports: { registerOmpRuntime() {} },
+});
+const definitions = await import("./agent-definitions.ts");
+mock.module("./agent-definitions.ts", {
+  namedExports: { ...definitions, registerOmpLaunchPolicy() {} },
+});
+const foreignSessions = await import("./foreign-session.ts");
+const { SessionManager: fixtureSessions } =
+  await import("@earendil-works/pi-coding-agent");
+mock.module("./foreign-session.ts", {
+  namedExports: {
+    ...foreignSessions,
+    inspectSessionFile: (path: string) => fixtureSessions.open(path),
+    findSessionFileById: (cwd: string, id: string) =>
+      fixtureSessions.findById(cwd, id),
+  },
+});
 const {
   resolveAssignmentSession: resolveOwnedAssignmentSession,
   sessionAgentIdentity,
@@ -854,6 +891,10 @@ export function fakePi(
       ? undefined
       : [...(options.activeTools ?? [])];
   const pi = {
+    registerFlag() {},
+    getFlag() {
+      return undefined;
+    },
     events: {
       on(name: string, handler: (event: any) => unknown) {
         events.set(name, [...(events.get(name) ?? []), handler]);
@@ -1127,8 +1168,8 @@ export function listResponse(
     ...(sessionId
       ? {
           agent_session: {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: sessionId,
           },
@@ -1231,8 +1272,8 @@ export function leadExec(
                   agent_status: useAgentStatus ? agentStatus : status,
                   agent_session: listSession
                     ? {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: listSession,
                       }
@@ -1277,8 +1318,8 @@ export function leadExec(
               workspace_id: WORKSPACE,
               cwd: "/tmp",
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: session,
               },
@@ -1316,8 +1357,8 @@ export function agentFromState(
     tab_id: `${state.agentLabel}-tab`,
     tab_label: "agents",
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: state.piSessionId,
     },
@@ -1375,8 +1416,8 @@ export function agentControllerExecutor(
                 agent: state.agentLabel,
                 agent_status: state.activeRequestId ? "working" : "idle",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: state.piSessionId,
                 },
@@ -1496,7 +1537,7 @@ export function delegatedLifecycleExecutor(
             workspace_id: WORKSPACE,
             cwd: testCwd,
             foreground_cwd: testCwd,
-            agent: "pi",
+            agent: "omp",
             agent_status: "idle",
           },
         ]
@@ -1649,8 +1690,8 @@ export function delegatedLifecycleExecutor(
                     workspace_id: WORKSPACE,
                     cwd: state.cwd,
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: state.piSessionId,
                     },
@@ -1843,8 +1884,8 @@ export function cascadeExecutor(
             const agent = agentFromState(state);
             if (state.agentLabel === options.mismatchSessionLabel)
               agent.agent_session = {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: "22222222-2222-4222-8222-222222222222",
               };
@@ -1868,8 +1909,8 @@ export function cascadeExecutor(
               foreground_cwd: state.cwd,
               agent_status: "unknown",
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: state.piSessionId,
               },
@@ -1893,8 +1934,8 @@ export function cascadeExecutor(
             const agent = agentFromState(state);
             if (state.agentLabel === options.mismatchSessionLabel)
               agent.agent_session = {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: "22222222-2222-4222-8222-222222222222",
               };
@@ -1911,8 +1952,8 @@ export function cascadeExecutor(
               foreground_cwd: state.cwd,
               agent_status: "unknown",
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: state.piSessionId,
               },
@@ -1953,8 +1994,8 @@ export function cascadeExecutor(
         const agent = agentFromState(state);
         if (state.agentLabel === options.mismatchSessionLabel)
           agent.agent_session = {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: "22222222-2222-4222-8222-222222222222",
           };
@@ -2018,8 +2059,8 @@ export function cascadeExecutor(
                     workspace_id: state.workspaceId,
                     cwd: state.cwd,
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: state.piSessionId,
                     },
@@ -2298,8 +2339,8 @@ export function createStagedAssignmentFixture(
                   workspace_id: WORKSPACE,
                   cwd: "/tmp",
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: state.piSessionId,
                   },
@@ -2559,8 +2600,8 @@ export function startupExecutor(
                   workspace_id: WORKSPACE,
                   cwd: testCwd,
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                   },
@@ -2586,8 +2627,8 @@ export function startupExecutor(
                 ...(session
                   ? {
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: session,
                       },
@@ -2632,8 +2673,8 @@ export function startupExecutor(
                   workspace_id: WORKSPACE,
                   cwd: testCwd,
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: sessionForGet(getCount) ?? DEFAULT_PI_SESSION_ID,
                   },
@@ -2806,8 +2847,8 @@ export function startupExecutor(
                 terminal_id: "startup-terminal",
                 cwd: testCwd,
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                 },
@@ -2920,8 +2961,8 @@ export function startupExecutor(
         workspace_id: WORKSPACE,
         cwd: testCwd,
         agent_session: {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "id",
           value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         },
@@ -2962,7 +3003,7 @@ export function startupExecutor(
                 label,
                 runId || AGENT_ID,
               ),
-              herdr_kind: "pi",
+              herdr_kind: "omp",
               agent_definition: null,
               model: null,
               thinking: null,

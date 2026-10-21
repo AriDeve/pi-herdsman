@@ -103,46 +103,42 @@ test("menu frames preserve structural gaps and replace previous content at narro
   }
 });
 
-test("automatic session names preserve existing Pi naming decisions", () => {
-  const entries: { type: string; name?: string }[] = [];
+test("automatic session names preserve existing OMP names and tolerate async failures", async () => {
+  let currentName: string | undefined;
   const names: string[] = [];
   const pi = {
-    setSessionName(name: string) {
+    getSessionName: () => currentName,
+    async setSessionName(name: string) {
+      await Promise.resolve();
       names.push(name);
-      entries.push({ type: "session_info", name });
+      currentName = name;
     },
   };
-  const ctx = { sessionManager: { getEntries: () => entries } };
 
-  nameSessionIfUnset(pi as never, ctx as never, "reviewer");
-  nameSessionIfUnset(pi as never, ctx as never, "different");
+  await nameSessionIfUnset(pi, "reviewer");
+  await nameSessionIfUnset(pi, "different");
   assert.deepEqual(names, ["reviewer"]);
-
-  entries.splice(0, entries.length, { type: "session_info", name: "manual" });
-  nameSessionIfUnset(pi as never, ctx as never, "automatic");
+  currentName = "manual";
+  await nameSessionIfUnset(pi, "automatic");
   assert.deepEqual(names, ["reviewer"]);
-  entries.splice(0, entries.length, { type: "session_info", name: "" });
-  nameSessionIfUnset(pi as never, ctx as never, "automatic");
-  assert.deepEqual(names, ["reviewer"]);
-
-  entries.length = 0;
-  nameSessionIfUnset(pi as never, ctx as never, "  reviewer\ncontinued  ");
+  currentName = undefined;
+  await nameSessionIfUnset(pi, "  reviewer\ncontinued  ");
   assert.deepEqual(names, ["reviewer", "reviewer continued"]);
-  entries.length = 0;
-  nameSessionIfUnset(pi as never, ctx as never, "x".repeat(100));
+  currentName = "";
+  await nameSessionIfUnset(pi, "x".repeat(100));
   assert.equal(names[2]?.length, 80);
   assert.equal(names[2]?.endsWith("…"), true);
-  nameSessionIfUnset(pi as never, ctx as never, " \n ");
+  await nameSessionIfUnset(pi, " \n ");
   assert.equal(names.length, 3);
 
-  assert.doesNotThrow(() =>
+  await assert.doesNotReject(() =>
     nameSessionIfUnset(
       {
-        setSessionName() {
-          throw new Error("Pi unavailable");
+        getSessionName: () => undefined,
+        async setSessionName() {
+          throw new Error("OMP unavailable");
         },
-      } as never,
-      { sessionManager: { getEntries: () => [] } } as never,
+      },
       "reviewer",
     ),
   );
@@ -3180,27 +3176,70 @@ test("status widget hit regions select exact rows and visible ancestors only", (
     ],
   });
   widget.render(140);
-  const click = (x: number, y: number, width = 140) =>
-    widget.handleMouse({ type: "click", button: "left", x, y, width });
-  assert.equal(click(3, 0)?.handled, true);
+  const click = (x: number, y: number) =>
+    widget.routeMouse(
+      {
+        button: 0,
+        col: x,
+        row: y,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      y,
+      x,
+    );
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 73,
+      row: 42,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    3,
+  );
   assert.deepEqual(selected.pop(), {
     kind: "session",
     sessionId: "lead-session",
   });
   assert.equal(click(7, 0), undefined);
   assert.equal(click(11, 0), undefined);
-  assert.equal(click(0, 1)?.handled, true);
+  click(0, 1);
   assert.deepEqual(selected.pop(), {
     kind: "session",
     sessionId: "parent-session",
   });
-  assert.equal(click(0, 2)?.handled, true);
+  click(0, 2);
   assert.deepEqual(selected.pop(), {
     kind: "session",
     sessionId: "child-session",
   });
   assert.equal(click(0, 3), undefined);
-  assert.equal(click(0, 1, 139), undefined);
+  widget.routeMouse(
+    {
+      button: 1,
+      col: 0,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: false,
+    },
+    1,
+    0,
+  );
+  assert.deepEqual(selected, []);
+  widget.render(1);
+  click(0, 1);
+  assert.deepEqual(selected, []);
+  widget.dispose();
+  click(0, 0);
+  assert.deepEqual(selected, []);
 });
 
 test("truncated Agent rows are not clickable when their label is hidden", (t) => {
@@ -3226,7 +3265,19 @@ test("truncated Agent rows are not clickable when their label is hidden", (t) =>
   const rows = widget.render(1);
   assert.equal(stripVTControlCharacters(rows[1]!), "…");
   assert.equal(
-    widget.handleMouse({ type: "click", button: "left", x: 0, y: 1, width: 1 }),
+    widget.routeMouse(
+      {
+        button: 0,
+        col: 0,
+        row: 1,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      1,
+      0,
+    ),
     undefined,
   );
   assert.deepEqual(selected, []);
@@ -3256,7 +3307,19 @@ test("Agent definition does not substitute for a clipped identifying label", (t)
   const rows = widget.render(width);
   assert.equal(stripVTControlCharacters(rows[1]!), "└─ ⠋ worker  …");
   assert.equal(
-    widget.handleMouse({ type: "click", button: "left", x: 0, y: 1, width }),
+    widget.routeMouse(
+      {
+        button: 0,
+        col: 0,
+        row: 1,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      1,
+      0,
+    ),
     undefined,
   );
   assert.deepEqual(selected, []);
@@ -3279,8 +3342,20 @@ test("managed marker has an independent visible-only hit region", (t) => {
   widget.render(80);
   const start = visibleWidth("● lead · ");
   const click = (x: number) =>
-    widget.handleMouse({ type: "click", button: "left", x, y: 0, width: 80 });
-  assert.equal(click(start)?.handled, true);
+    widget.routeMouse(
+      {
+        button: 0,
+        col: x,
+        row: 0,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      0,
+      x,
+    );
+  click(start);
   assert.deepEqual(selected.pop(), { kind: "assigned-manager" });
   assert.equal(click(start - 1), undefined);
   assert.equal(click(start + visibleWidth("managed")), undefined);
@@ -3294,6 +3369,7 @@ test("managed marker has an independent visible-only hit region", (t) => {
   });
   widget.render(80);
   assert.equal(click(start), undefined);
+  assert.deepEqual(selected, []);
 });
 
 test("widget uses logical labels in the shared row formatter", (t) => {
@@ -5367,13 +5443,25 @@ test("Chief tree shows project and branch without internal paths or zero counts"
   );
   widget.render(120);
   const click = (x: number, y: number) =>
-    widget.handleMouse({ type: "click", button: "left", x, y, width: 120 });
-  assert.equal(click(3, 1)?.handled, true);
+    widget.routeMouse(
+      {
+        button: 0,
+        col: x,
+        row: y,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      y,
+      x,
+    );
+  click(3, 1);
   assert.deepEqual(focused.pop(), {
     kind: "session",
     sessionId: "manager-session",
   });
-  assert.equal(click(4, 2)?.handled, true);
+  click(4, 2);
   assert.deepEqual(focused.pop(), {
     kind: "session",
     sessionId: "opaque",
@@ -5647,15 +5735,18 @@ test("Manager standalone Lead rows expose their exact click target", () => {
     "● manager · pi-herdsman",
     "└─ ○ feat/unassigned · Lead",
   ]);
-  assert.equal(
-    widget.handleMouse({
-      type: "click",
-      button: "left",
-      x: 4,
-      y: 1,
-      width: 120,
-    })?.handled,
-    true,
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 4,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    4,
   );
   assert.deepEqual(focused, [
     { kind: "session", sessionId: "standalone-lead" },
@@ -5675,7 +5766,19 @@ test("truncated supervision rows are not clickable when their name is hidden", (
   const rows = widget.render(1);
   assert.equal(stripVTControlCharacters(rows[1]!), "…");
   assert.equal(
-    widget.handleMouse({ type: "click", button: "left", x: 0, y: 1, width: 1 }),
+    widget.routeMouse(
+      {
+        button: 0,
+        col: 0,
+        row: 1,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      1,
+      0,
+    ),
     undefined,
   );
   assert.deepEqual(focused, []);
@@ -5700,7 +5803,19 @@ test("truncated Manager branch is not clickable when it matches row status", () 
   const rows = widget.render(width);
   assert.equal(stripVTControlCharacters(rows[1]!), "└─ ● a… · active");
   assert.equal(
-    widget.handleMouse({ type: "click", button: "left", x: 0, y: 1, width }),
+    widget.routeMouse(
+      {
+        button: 0,
+        col: 0,
+        row: 1,
+        release: false,
+        wheel: null,
+        motion: false,
+        leftClick: true,
+      },
+      1,
+      0,
+    ),
     undefined,
   );
   assert.deepEqual(focused, []);

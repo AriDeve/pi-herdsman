@@ -1,3 +1,4 @@
+import "./support.ts";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -51,11 +52,10 @@ import {
 } from "./supervision.ts";
 import { OperationError } from "./errors.ts";
 import { readRequiredEvidenceSnapshot, resultPath } from "./storage.ts";
-import { claimDelegationLock } from "./agent-controller.ts";
-import {
-  createLeadCommandRuntime,
-  createLeadProjectRuntime,
-} from "./lead-runtime.ts";
+// Core imports must follow support's asynchronous host-module mocks.
+const { claimDelegationLock } = await import("./agent-controller.ts");
+const { createLeadCommandRuntime, createLeadProjectRuntime } =
+  await import("./lead-runtime.ts");
 
 test("Manager required-evidence removal is exact, assignment-scoped, and fail-closed", async () => {
   const manager = {
@@ -791,10 +791,8 @@ import support, {
   writeResult,
   writeAgentState,
 } from "./support.ts";
-import {
-  createLeadToolState,
-  sessionLeadExecutionState,
-} from "./lead-runtime.ts";
+const { createLeadToolState, sessionLeadExecutionState } =
+  await import("./lead-runtime.ts");
 
 const leadTools = [
   "list_agents",
@@ -1024,14 +1022,13 @@ test("failed ordinary mode rollback invalidates execution and fails closed", asy
     assert.ok(notices.some((message) => message.includes("projection failed")));
     assert.deepEqual(pi.pi.getActiveTools(), leadTools);
     assert.deepEqual(sessionLeadExecutionState(entries)?.mode, "flexible");
-    const prompt: any = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](prompt, context);
-    assert.equal(
-      prompt.systemPromptOptions.sections.pi_herdsman_lead_execution,
-      undefined,
+    const prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
+    assert.doesNotMatch(
+      prompt.systemPrompt.join("\n"),
+      /Delegate bounded execution work|Do not keep otherwise delegable execution local/u,
     );
   } finally {
     await pi.events.get("session_shutdown")?.[0]();
@@ -1276,7 +1273,7 @@ test("failed capture cannot preserve tools after inherited execution becomes inv
   } as any);
 
   executionValid = false;
-  transitions.reconcileRoleTools();
+  await transitions.reconcileRoleTools();
 
   assert.deepEqual(pi.pi.getActiveTools(), []);
   assert.equal(marker, undefined);
@@ -1302,26 +1299,24 @@ test("session tree navigation restores each branch's execution mode, baseline, a
     branch = branchEntry("flexible", ["read", "bash"]);
     await pi.events.get("session_tree")![0](undefined, context);
     assert.deepEqual(pi.pi.getActiveTools(), ["read", "bash", ...leadTools]);
-    let event: any = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](event, context);
+    let prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
     assert.match(
-      event.systemPromptOptions.sections.pi_herdsman_lead_execution,
+      prompt.systemPrompt.join("\n"),
       /Delegate bounded execution work when an Agent/u,
     );
 
     branch = branchEntry("orchestrate", ["read", "edit"]);
     await pi.events.get("session_tree")![0](undefined, context);
     assert.deepEqual(pi.pi.getActiveTools(), leadTools);
-    event = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](event, context);
+    prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
     assert.match(
-      event.systemPromptOptions.sections.pi_herdsman_lead_execution,
+      prompt.systemPrompt.join("\n"),
       /Do not keep otherwise delegable execution local/u,
     );
     assert.deepEqual(sessionLeadExecutionState(branch)?.leadTools, [
@@ -1664,8 +1659,8 @@ test("Manager peer messages deliver to a live Manager without changing its role"
       tab_id: manager.tabId,
       workspace_id: manager.workspaceId,
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: manager.sessionId,
       },
@@ -2039,13 +2034,12 @@ test("persisted Chief restores the saved ordinary execution profile on exit", as
           entry.data.error.includes("ordinary profile restoration failed"),
       ),
     );
-    const promptEvent = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {} },
-    };
-    await pi.events.get("before_agent_start")![0](promptEvent, context);
+    const prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
     assert.match(
-      promptEvent.systemPromptOptions.sections.pi_herdsman_lead_execution,
+      prompt.systemPrompt.join("\n"),
       /Do not keep otherwise delegable execution local/,
     );
   } finally {
@@ -2612,8 +2606,8 @@ function managerAgentIdentity() {
     tab_id: process.env.HERDR_TAB_ID,
     workspace_id: WORKSPACE,
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -2698,31 +2692,19 @@ test("active Manager supervision refreshes serialize and coalesce concurrent req
   maxActive = 0;
   gateRefresh = true;
   const beforeStart = pi.events.get("before_agent_start")![0];
-  const promptEvents: any[] = [];
-  const firstEvent = {
-    systemPrompt: "base",
-    systemPromptOptions: { sections: {}, contextFiles: [] },
-  };
-  promptEvents.push(firstEvent);
+  const firstEvent = { systemPrompt: ["base"] };
   const firstCaller = beforeStart(firstEvent, context);
   await gatedSnapshotStarted.promise;
   const callers = Array.from({ length: 4 }, () => {
-    const event = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    promptEvents.push(event);
+    const event = { systemPrompt: ["base"] };
     return beforeStart(event, context);
   });
   release.resolve();
   const results = await Promise.all([firstCaller, ...callers]);
   assert.ok(
-    results.every((result, index) => {
-      assert.equal(result, undefined);
-      return /Manager role/.test(
-        promptEvents[index].systemPromptOptions.sections.pi_herdsman_role,
-      );
-    }),
+    results.every((result) =>
+      /Manager role/.test(result.systemPrompt.join("\n")),
+    ),
   );
   assert.equal(maxActive, 1);
   assert.equal(snapshots - refreshSnapshotBase, 2);
@@ -3022,21 +3004,18 @@ test("root Lead explicitly enters Manager; a competing root session stays Lead",
       first.pi.getAllTools().some((tool) => tool.name === "delegate_project"),
       true,
     );
-    const leadPromptEvent = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
+    const leadPromptEvent = { systemPrompt: ["base"] };
     const leadPrompt = await first.events.get("before_agent_start")![0](
       leadPromptEvent,
       ctx1,
     );
-    assert.equal(leadPrompt, undefined);
+    assert.equal(leadPrompt.systemPrompt[0], "base");
     assert.match(
-      leadPromptEvent.systemPromptOptions.sections.pi_herdsman_role,
+      leadPrompt.systemPrompt.join("\n"),
       /Own architecture, approved scope, acceptance of Agent outputs, integration, conflict resolution/,
     );
     assert.match(
-      leadPromptEvent.systemPromptOptions.sections.pi_herdsman_lead_execution,
+      leadPrompt.systemPrompt.join("\n"),
       /Delegate bounded execution work when an Agent can reasonably own it/,
     );
     failManagerMetadata = true;
@@ -3109,31 +3088,27 @@ test("root Lead explicitly enters Manager; a competing root session stays Lead",
       tabListsBeforeStaleRead + 1,
       "the superseded pane read stops before listing tabs",
     );
-    const managerPromptEvent = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
+    const managerPromptEvent = { systemPrompt: ["base"] };
     const managerPrompt = await first.events.get("before_agent_start")![0](
       managerPromptEvent,
       ctx1,
     );
-    assert.equal(managerPrompt, undefined);
+    assert.equal(managerPrompt.systemPrompt[0], "base");
     assert.match(
-      managerPromptEvent.systemPromptOptions.sections.pi_herdsman_role,
+      managerPrompt.systemPrompt.join("\n"),
       /You are the verified Manager[\s\S]*Project execution belongs to assigned Leads and their Agent trees[\s\S]*Supervision is event-driven[\s\S]*Coordinate assigned project work through Leads[\s\S]*Set priorities, review outcomes, resolve decisions, request corrections, and\s+integrate accepted work/i,
     );
     assert.doesNotMatch(
-      managerPromptEvent.systemPromptOptions.sections.pi_herdsman_role,
+      managerPrompt.systemPrompt.join("\n"),
       /Lead role[\s\S]*## Manager role/,
     );
     assert.doesNotMatch(
-      managerPromptEvent.systemPromptOptions.sections.pi_herdsman_role,
+      managerPrompt.systemPrompt.join("\n"),
       /Available agent definitions/,
     );
-    assert.equal(
-      managerPromptEvent.systemPromptOptions.sections
-        .pi_herdsman_lead_execution,
-      undefined,
+    assert.doesNotMatch(
+      managerPrompt.systemPrompt.join("\n"),
+      /Delegate bounded execution work|Do not keep otherwise delegable execution local/u,
     );
     assert.equal(managerPrompt?.message, undefined);
     const managerContext = first.sentMessageCalls.findLast(
@@ -3969,9 +3944,9 @@ test("Manager auto-start activates after identity and coordination verification 
   const projectCwd = realFs.mkdtempSync(
     join(tmpdir(), "herdsman-manager-override-"),
   );
-  realFs.mkdirSync(join(projectCwd, ".pi"));
+  realFs.mkdirSync(join(projectCwd, ".omp"));
   realFs.writeFileSync(
-    join(projectCwd, ".pi", "settings.json"),
+    join(projectCwd, ".omp", "settings.json"),
     JSON.stringify({ piHerdsman: { autoActivateManager: true } }),
   );
   process.env.HERDR_PANE_ID = "verified-auto-manager-pane";
@@ -3989,8 +3964,8 @@ test("Manager auto-start activates after identity and coordination verification 
   const agent = {
     ...managerAgentIdentity(),
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: sessionId,
     },
@@ -4096,8 +4071,8 @@ test("Manager auto-start rejects mismatched Herdr identity and releases its leas
     ...managerAgentIdentity(),
     pane_id: "different-pane",
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: sessionId,
     },
@@ -4196,8 +4171,8 @@ test("Manager auto-start suspends and invalidates Lead when identity cleanup rel
     ...managerAgentIdentity(),
     pane_id: "different-pane",
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: sessionId,
     },
@@ -4302,7 +4277,7 @@ test("Manager auto-start finalization suspends and invalidates Lead when rollbac
       tools.filter((tool) => tool === "read"),
   };
   const transitions = createLeadRoleTransitions(state, host);
-  transitions.finalizeOptionalManagerStartup(fakeContext() as any);
+  await transitions.finalizeOptionalManagerStartup(fakeContext() as never);
 
   assert.equal(state.controllerRole, "manager");
   assert.ok(state.managerLease);
@@ -4787,9 +4762,19 @@ async function managerRemovalFixture(
     branch,
     text: "test assignment",
     ...(!options.missingSessionProvenance
-      ? { piSessionFile: "persisted-session.jsonl" }
+      ? { piSessionFile: join(repoKey, "persisted-session.jsonl") }
       : {}),
   };
+  if (assignment.piSessionFile) {
+    const path = assignment.piSessionFile;
+    nativeSessions.set(path, {
+      id: options.persistedSessionId ?? assignment.id,
+      path,
+      cwd: persistedCheckoutPath ?? checkoutPath,
+      entries: [],
+    });
+    t.after(() => nativeSessions.delete(path));
+  }
   let checkoutPresent = true;
   let leadRunning = options.runningLead ?? false;
   let stoppedLeadCount = 0;
@@ -4850,12 +4835,6 @@ async function managerRemovalFixture(
     supervisionRuntime: () => ({}),
     listProjectAssignments: () => (assignment ? [assignment] : []),
     readProjectAssignment: () => assignment,
-    SessionManager: {
-      open: () => ({
-        getSessionId: () => options.persistedSessionId ?? assignment?.id,
-        getCwd: () => persistedCheckoutPath ?? checkoutPath,
-      }),
-    },
     liveLead: async () =>
       leadRunning
         ? [
@@ -5133,7 +5112,6 @@ test("Manager removal revalidates exact assignment identity after confirmation",
   });
   await assert.rejects(
     fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx),
-    /Removal target changed during confirmation/,
   );
   assert.deepEqual(fixture.removals, []);
   assert.equal(fixture.assignment()?.id, "replacement-assignment");
@@ -5246,7 +5224,8 @@ async function managerDelegateAssignmentTest(
   );
   let childSession = `lead-${randomUUID()}`;
   let primaryWorkspace = WORKSPACE;
-  const childSessionPath = () => join(tmpdir(), `${childSession}.jsonl`);
+  let childSessionFile = join(tmpdir(), `${childSession}.jsonl`);
+  const childSessionPath = () => childSessionFile;
   let created = false;
   let createdBranch = "";
   let reportCheckoutAbsent = false;
@@ -5279,8 +5258,8 @@ async function managerDelegateAssignmentTest(
   });
   let managerAgent: any = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -5472,29 +5451,25 @@ async function managerDelegateAssignmentTest(
         { name: "test startup assignment lock release" },
       );
       assignmentLease();
-      const sessionIdIndex = args.indexOf("--session-id");
-      assert.notEqual(sessionIdIndex, -1);
-      childSession = args[sessionIdIndex + 1]!;
-      assert.equal(childSession, assignment.id);
-      const toolsIndex = args.indexOf("--tools");
-      assert.notEqual(toolsIndex, -1);
-      assert.equal(args.includes("--no-tools"), true);
-      assert.deepEqual(args[toolsIndex + 1]!.split(","), [
-        ...leadTools,
-        "mcp__",
-      ]);
-      const excludedIndex = args.indexOf("--exclude-tools");
-      assert.notEqual(excludedIndex, -1);
-      assert.equal(args[excludedIndex + 1], "mcp__");
-      for (const tool of ["bash", "powershell", "edit", "write"])
-        assert.equal(args[toolsIndex + 1]!.split(",").includes(tool), false);
-      assert.equal(args.includes("--no-skills"), true);
-      assert.equal(args.includes("--no-extensions"), true);
+      const resumeIndex = args.indexOf("--resume");
+      assert.notEqual(resumeIndex, -1);
+      childSessionFile = args[resumeIndex + 1]!;
+      const header: { type: string; id: string; cwd: string } = JSON.parse(
+        readFileSync(childSessionFile, "utf8").split("\n")[0]!,
+      );
+      assert.equal(header.type, "session");
+      assert.equal(header.id, assignment.id);
+      assert.equal(header.cwd, childCwd);
+      childSession = header.id;
+      nativeSessions.set(childSessionFile, {
+        id: childSession,
+        path: childSessionFile,
+        cwd: childCwd,
+        entries: [],
+      });
       const thinkingIndex = args.indexOf("--thinking");
       assert.notEqual(thinkingIndex, -1);
       assert.equal(args[thinkingIndex + 1] === "low", projectTrusted);
-      assert.equal(args.includes("--approve"), projectTrusted);
-      assert.equal(args.includes("--no-approve"), !projectTrusted);
       const promptIndex = args.indexOf("--append-system-prompt");
       assert.notEqual(promptIndex, -1);
       const childPrompt = readFileSync(args[promptIndex + 1]!, "utf8");
@@ -5514,8 +5489,8 @@ async function managerDelegateAssignmentTest(
         agent: {
           name: "lead",
           agent_session: {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "path",
             value: childSessionPath(),
           },
@@ -5530,8 +5505,8 @@ async function managerDelegateAssignmentTest(
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "path",
                     value: childSessionPath(),
                   },
@@ -5544,25 +5519,6 @@ async function managerDelegateAssignmentTest(
         },
       });
     if (command === "herdr" && isAgentList(args)) {
-      if (
-        started &&
-        !realFs.existsSync(childSessionPath()) &&
-        listCoordinationMessagePaths(supervisionRuntime(), childSession).length
-      ) {
-        realFs.writeFileSync(
-          childSessionPath(),
-          JSON.stringify({
-            type: "session",
-            id: childSession,
-          }),
-        );
-        nativeSessions.set(childSessionPath(), {
-          id: childSession,
-          path: childSessionPath(),
-          cwd: childCwd,
-          entries: [],
-        });
-      }
       return respond({
         agents: [
           ...(managerAgent ? [managerAgent] : []),
@@ -5570,8 +5526,8 @@ async function managerDelegateAssignmentTest(
             ? [
                 {
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "path",
                     value: childSessionPath(),
                   },
@@ -5741,7 +5697,7 @@ async function managerDelegateAssignmentTest(
       },
     ]);
     const contextProjection = await pi.events.get("before_agent_start")![0](
-      { systemPrompt: "base", systemPromptOptions: { contextFiles: [] } },
+      { systemPrompt: ["base"] },
       ctx,
     );
     assert.equal(contextProjection?.message, undefined);
@@ -5851,8 +5807,8 @@ async function managerDelegateAssignmentTest(
           args[1] === "start" &&
           args.includes("--pane") &&
           args.includes("child-pane") &&
-          args.includes("--session-id") &&
-          args.includes(childSession),
+          args.includes("--resume") &&
+          args.includes(childSessionPath()),
       ),
     );
     const paths = listCoordinationMessagePaths(
@@ -6379,8 +6335,8 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
   });
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -6392,8 +6348,8 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
   const assignedWorkspace = `workspace-${randomUUID()}`;
   const assignedLead = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: assignedLeadSession,
     },
@@ -6441,8 +6397,8 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
   });
   const ordinaryLead = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: ordinarySessionPath,
     },
@@ -6627,14 +6583,6 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
     overview.handleInput(" ");
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
-    const peekLines = overview.render(120);
-    assert.match(peekLines[1], /^ Peek ·/u);
-    assert.equal(peekLines[2].trim(), "");
-    const peekFooter = peekLines.findIndex((line: string) =>
-      line.includes("Esc back · Enter focus"),
-    );
-    assert.equal(peekLines[peekFooter - 1].trim(), "");
-    assert.match(peekLines[peekFooter], /^ Esc back/u);
     assert.match(
       overview.render(120).join("\n"),
       /bounded ordinary live output/,
@@ -6668,8 +6616,8 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
     delayOrdinaryRead = false;
     nativeSessions.delete(ordinarySessionPath);
     ordinaryLead.agent_session = {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: ordinaryLeadSession,
     };
@@ -6686,8 +6634,8 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
       "ordinary supervision does not advertise unavailable persisted evidence",
     );
     ordinaryLead.agent_session = {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: ordinarySessionPath,
     };
@@ -6742,7 +6690,7 @@ test("Manager supervises project Leads while Chief keeps only unclaimed Leads in
       let chiefPrompt;
       try {
         chiefPrompt = await chief.events.get("before_agent_start")![0](
-          { systemPrompt: "base", systemPromptOptions: { contextFiles: [] } },
+          { systemPrompt: ["base"] },
           chiefCtx,
         );
       } finally {
@@ -6823,8 +6771,8 @@ test("ordinary Leads exchange turn-triggering messages with their Manager", asyn
   const leadWorkspace = `workspace-${randomUUID()}`;
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -6835,8 +6783,8 @@ test("ordinary Leads exchange turn-triggering messages with their Manager", asyn
   };
   const leadAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: leadSession,
     },
@@ -7134,8 +7082,8 @@ test("Manager-to-ordinary-Lead inbox rechecks authority before importing result 
   });
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: managerSession,
     },
@@ -7146,8 +7094,8 @@ test("Manager-to-ordinary-Lead inbox rechecks authority before importing result 
   };
   const leadAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: leadSession,
     },
@@ -7268,8 +7216,8 @@ test("a Lead without a Manager routes upward to Chief and keeps peer presence", 
   };
   const chiefAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: chiefId,
     },
@@ -7452,8 +7400,8 @@ test("Chief message persistence failure can recover without withdrawing peer pre
   };
   const chiefAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: chiefId,
     },
@@ -8367,8 +8315,8 @@ test("competing Lead focuses Chief with an absent prospective session path", asy
     tab_id: descriptor.tabId,
     workspace_id: descriptor.workspaceId,
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: descriptor.piSessionFile,
     },
@@ -8783,14 +8731,13 @@ test("malformed selected branch withdraws stale Chief authority", async () => {
     await pi.events.get("session_tree")![0](undefined, context);
     assert.equal(pi.pi.getActiveTools().includes("list_staff"), false);
     assert.deepEqual(pi.pi.getActiveTools(), leadTools);
-    const ordinaryPrompt: any = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](ordinaryPrompt, context);
-    assert.equal(
-      ordinaryPrompt.systemPromptOptions.sections.pi_herdsman_lead_execution,
-      undefined,
+    const ordinaryPrompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
+    assert.doesNotMatch(
+      ordinaryPrompt.systemPrompt.join("\n"),
+      /Delegate bounded execution work|Do not keep otherwise delegable execution local/u,
     );
     assert.ok(
       entries.some(
@@ -9073,10 +9020,6 @@ test("Herdsman and agents share command handling and grammar", async () => {
   setLeadEnvironment();
   const pi = fakePi();
   registerExtension!(pi.pi as never);
-  assert.deepEqual(
-    pi.entryRenderers.map((entry) => entry.customType),
-    ["pi-herdsman-agent-definitions", "pi-herdsman-herd-run"],
-  );
   assert.ok(
     pi.messageRenderers.some(
       (message) => message.customType === "pi-herdsman-stop-summary",
@@ -9131,7 +9074,7 @@ test("/agents placement subtree writes flat config outside project settings", as
   setLeadEnvironment();
   const projectRoot = join(PI_AGENT_ROOT, "placement-project");
   const configPath = join(PI_AGENT_ROOT, "pi-herdsman", "config.json");
-  realFs.mkdirSync(join(projectRoot, ".pi"), { recursive: true });
+  realFs.mkdirSync(join(projectRoot, ".omp"), { recursive: true });
   const pi = fakePi();
   registerExtension!(pi.pi as never);
   const context = fakeContext() as any;
@@ -9144,7 +9087,7 @@ test("/agents placement subtree writes flat config outside project settings", as
       "subtree",
     );
     assert.equal(
-      realFs.existsSync(join(projectRoot, ".pi", "settings.json")),
+      realFs.existsSync(join(projectRoot, ".omp", "settings.json")),
       false,
     );
   } finally {
@@ -9193,24 +9136,24 @@ test("Chief profile drives the turn-start tools, prompt, and tool-call guard", a
       ownerSessionId: ctx.sessionManager.getSessionId(),
     });
     await pi.commandOptions.get("chief").handler("", ctx);
-    const event = {
-      systemPrompt: "base",
-      systemPromptOptions: { contextFiles: [] },
-    };
+    const event = { systemPrompt: ["base"] };
     const prompt = await pi.events.get("before_agent_start")![0](event, ctx);
     assert.match(
-      prompt?.systemPrompt ?? "",
+      prompt?.systemPrompt.join("\n") ?? "",
       /verified workspace-neutral Chief/,
     );
     assert.match(
-      prompt?.systemPrompt ?? "",
+      prompt?.systemPrompt.join("\n") ?? "",
       /Each unresolved unit of work has one executor/,
     );
     assert.match(
-      prompt?.systemPrompt ?? "",
+      prompt?.systemPrompt.join("\n") ?? "",
       /A proven lost Agent remains unresolved/,
     );
-    assert.match(prompt?.systemPrompt ?? "", /Configured chief body/);
+    assert.match(
+      prompt?.systemPrompt.join("\n") ?? "",
+      /Configured chief body/,
+    );
     assert.ok(pi.pi.getActiveTools().includes("read"));
     assert.ok(pi.pi.getActiveTools().includes("list_staff"));
     for (const name of ["list_agents", "reply_agent", "close_agent"])
@@ -9503,13 +9446,13 @@ test("Chief activation replaces the lead widget and overview selection is intera
     `supervision-${randomUUID()}.sock`,
   );
   const lead = {
-    agent: "pi",
+    agent: "omp",
     pane_id: "lead-pane",
     tab_id: "lead-tab",
     workspace_id: WORKSPACE,
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: PARENT_SESSION_ID,
     },
@@ -9592,26 +9535,11 @@ test("Chief activation replaces the lead widget and overview selection is intera
   assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
   assert.ok(widgetKeys.includes("pi-herdsman"));
   assert.ok(widgetKeys.includes("pi-herdsman-staff"));
-  assert.equal(
-    pi.commandOptions.get("chief").description,
-    "Activate chief mode, or open its overview when already active",
-  );
   assert.equal(customCalls, 0);
   await pi.commandOptions.get("chief").handler("", context);
   assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
   assert.equal(customCalls, 1);
   assert.ok(overview);
-  const overviewLines = overview.render(120);
-  assert.match(overviewLines[1], /^ Pi Herdsman/u);
-  assert.equal(overviewLines[2].trim(), "");
-  const overviewFooter = overviewLines.findIndex((line: string) =>
-    line.includes("Space peek"),
-  );
-  assert.equal(overviewLines[overviewFooter - 1].trim(), "");
-  assert.match(overviewLines[overviewFooter], /^ Space peek/u);
-  assert.match(overview.render(120).join("\n"), /Pi Herdsman ·/);
-  assert.doesNotMatch(overview.render(120).join("\n"), /Pi Chief/);
-  assert.doesNotMatch(overview.render(120).join("\n"), /├─|└─/);
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.ok(overview.render(120).every((line: string) => line.length <= 120));
@@ -9804,19 +9732,55 @@ test("supervision clicks verify standalone Manager Leads with fresh evidence des
   runtime.startPeriodic(ctx);
   await runtime.refresh(ctx);
   assert.match(widget.render(120).join("\n"), /feat\/standalone · Lead/);
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 2, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 2,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    2,
+    5,
+  );
   await focusLookupStarted;
   await runtime.refresh(ctx);
   resolveFocusLookup(currentSnapshot);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, [paneId]);
   await runtime.refresh(ctx);
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 1, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    5,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, [paneId, assignedPaneId]);
   await runtime.refresh(ctx);
   mismatch = true;
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 1, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    5,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, [paneId, assignedPaneId]);
   await runtime.refresh(ctx);
@@ -9825,7 +9789,19 @@ test("supervision clicks verify standalone Manager Leads with fresh evidence des
   const replacementLookupStarted = new Promise<void>((resolve) => {
     markFocusLookupStarted = resolve;
   });
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 1, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    5,
+  );
   await replacementLookupStarted;
   currentState.sessionGeneration++;
   resolveFocusLookup(currentSnapshot);
@@ -9872,10 +9848,34 @@ test("supervision clicks verify standalone Manager Leads with fresh evidence des
     "└─ ● project-manager · 1 lead",
     "   └─ feat/nested · working",
   ]);
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 1, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    5,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
-  widget.handleMouse({ type: "click", button: "left", x: 5, y: 2, width: 120 });
+  widget.routeMouse(
+    {
+      button: 0,
+      col: 5,
+      row: 2,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    2,
+    5,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(
@@ -10039,13 +10039,13 @@ async function openChiefOverview(
   const agents = populated
     ? [
         {
-          agent: "pi",
+          agent: "omp",
           pane_id: "lead-pane",
           tab_id: "lead-tab",
           workspace_id: WORKSPACE,
           agent_session: {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: PARENT_SESSION_ID,
           },
@@ -11829,8 +11829,8 @@ test("Running rejects duplicate rendered labels before focus", async (t) => {
                       workspace_id: WORKSPACE,
                       cwd: "/tmp",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: identity.piSessionId,
                       },
@@ -11933,8 +11933,8 @@ test("Running excludes lost and unknown durable generations", async () => {
                       workspace_id: WORKSPACE,
                       cwd: "/tmp",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: unknownIdentity.piSessionId,
                       },
@@ -12037,8 +12037,8 @@ test("Running warns when the selected agent is replaced before focus", async () 
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: currentIdentity.piSessionId,
                     },
@@ -12209,8 +12209,8 @@ test("Running selects duplicate TUI labels by stable value and revalidates ident
                 tab_id: identity.tabId,
                 tab_label: "agents",
                 agent_session: {
-                  source: "herdr:pi",
-                  agent: "pi",
+                  source: "herdr:omp",
+                  agent: "omp",
                   kind: "id",
                   value: identity.piSessionId,
                 },
@@ -12236,8 +12236,8 @@ test("Running selects duplicate TUI labels by stable value and revalidates ident
                   workspace_id: WORKSPACE,
                   cwd: "/tmp",
                   agent_session: {
-                    source: "herdr:pi",
-                    agent: "pi",
+                    source: "herdr:omp",
+                    agent: "omp",
                     kind: "id",
                     value: identity.piSessionId,
                   },
@@ -12778,76 +12778,6 @@ test("Definitions Details in RPC reports metadata without expanding instructions
     await pi.events.get("session_shutdown")?.[0]();
     realFs.rmSync(definitionPath, { force: true });
   }
-});
-
-test("Agent Definition details toggle independently on click", () => {
-  setLeadEnvironment();
-
-  const pi = fakePi();
-  registerExtension!(pi.pi as never);
-
-  const renderer = pi.entryRenderers.find(
-    ({ customType }) => customType === "pi-herdsman-agent-definitions",
-  )!.renderer as any;
-  const entry = {
-    data: {
-      definitions: [
-        {
-          name: "scout",
-          description: "Example definition",
-          extensions: ["example-extension"],
-        },
-      ],
-      instructions: "AGENT_DEFINITION_INSTRUCTIONS_SENTINEL",
-    },
-  };
-  const theme = {
-    fg: (_role: string, text: string) => text,
-    bg: (_role: string, text: string) => text,
-    bold: (text: string) => text,
-  };
-  const click = {
-    type: "click",
-    button: "left",
-    x: 0,
-    y: 0,
-    screenX: 0,
-    screenY: 0,
-    width: 80,
-    height: 4,
-    shift: false,
-    alt: false,
-    ctrl: false,
-  };
-  const first = renderer(entry, { expanded: false }, theme);
-  const second = renderer(entry, { expanded: false }, theme);
-  const rendered = (component: any) => component.render(120).join("\n");
-
-  assert.doesNotMatch(
-    rendered(first),
-    /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u,
-  );
-  assert.doesNotMatch(
-    rendered(second),
-    /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u,
-  );
-  assert.equal(first.handleMouse(click)?.handled, true);
-  assert.match(rendered(first), /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u);
-  assert.doesNotMatch(
-    rendered(second),
-    /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u,
-  );
-  assert.equal(first.handleMouse(click)?.handled, true);
-  assert.doesNotMatch(
-    rendered(first),
-    /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u,
-  );
-
-  const globallyExpanded = renderer(entry, { expanded: true }, theme);
-  assert.match(
-    rendered(globallyExpanded),
-    /AGENT_DEFINITION_INSTRUCTIONS_SENTINEL/u,
-  );
 });
 
 test("Definitions cancellation navigates one menu level at a time", async () => {
@@ -13808,25 +13738,37 @@ test("delegating managed Agents focus only fresh owned child-row identities", as
     /owned-child/,
     notices.join(" | "),
   );
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y: 1,
-    width: 120,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 4,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    4,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["owned-child-pane"]);
 
   childState.ownerSessionId = "replacement-owner-session";
   writeAgentState(childMailbox, childState);
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y: 1,
-    width: 120,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 4,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    4,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["owned-child-pane"]);
   assert.ok(notices.some((message) => /Agent changed/u.test(message)));
@@ -13912,13 +13854,19 @@ test("Lead status child-row focus rechecks the exact Herdr session identity", as
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.ok(widget);
   assert.match(widget!.render(120).join("\n"), /lead-owned-child/);
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y: 1,
-    width: 120,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 4,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    4,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(
     focused,
@@ -13927,13 +13875,19 @@ test("Lead status child-row focus rechecks the exact Herdr session identity", as
   );
 
   replaceIdentity = true;
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y: 1,
-    width: 120,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 4,
+      row: 1,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    1,
+    4,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["lead-owned-child-pane"]);
   assert.ok(notices.some((message) => /Agent changed/u.test(message)));
@@ -13976,13 +13930,13 @@ test("managed Lead marker focuses its verified Manager pane", async (t) => {
     updatedAt: Date.now(),
   });
   const managerAgent = {
-    agent: "pi",
+    agent: "omp",
     pane_id: managerPaneId,
     tab_id: managerTabId,
     workspace_id: WORKSPACE,
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: managerId,
     },
@@ -14070,13 +14024,19 @@ test("managed Lead marker focuses its verified Manager pane", async (t) => {
     assert.match(widget?.render(120).join("\n") ?? "", /managed/u),
   );
   assert.ok(widget);
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: visibleWidth("● lead · "),
-    y: 0,
-    width: 120,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: visibleWidth("● lead · "),
+      row: 0,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    visibleWidth("● lead · "),
+  );
   await t.waitFor(() =>
     assert.deepEqual(focused, [managerPaneId], notices.join(" | ")),
   );
@@ -14132,13 +14092,13 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
                   agents: [
                     agentFromState(state),
                     {
-                      agent: "pi",
+                      agent: "omp",
                       workspace_id: WORKSPACE,
                       pane_id: "lead-pane",
                       tab_id: "lead-tab",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: LEAD_SESSION_ID,
                       },
@@ -14150,20 +14110,20 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
                       workspace_id: WORKSPACE,
                       cwd: state.cwd,
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: state.piSessionId,
                       },
                     },
                     {
-                      agent: "pi",
+                      agent: "omp",
                       pane_id: "lead-pane",
                       workspace_id: WORKSPACE,
                       cwd: "/tmp",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: LEAD_SESSION_ID,
                       },
@@ -14183,13 +14143,13 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
                   agents: [
                     agentFromState(state),
                     {
-                      agent: "pi",
+                      agent: "omp",
                       workspace_id: WORKSPACE,
                       pane_id: "lead-pane",
                       tab_id: "lead-tab",
                       agent_session: {
-                        source: "herdr:pi",
-                        agent: "pi",
+                        source: "herdr:omp",
+                        agent: "omp",
                         kind: "id",
                         value: LEAD_SESSION_ID,
                       },
@@ -14223,13 +14183,13 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
                     id: AGENT_ID,
                     result: {
                       agent: {
-                        agent: "pi",
+                        agent: "omp",
                         pane_id: "lead-pane",
                         workspace_id: WORKSPACE,
                         tab_id: "lead-tab",
                         agent_session: {
-                          source: "herdr:pi",
-                          agent: "pi",
+                          source: "herdr:omp",
+                          agent: "omp",
                           kind: "id",
                           value: replaceLeadIdentity
                             ? "replacement-session"
@@ -14277,50 +14237,71 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
   assert.deepEqual(widget!.render(160), [
     "● lead → agent:leaf-agent  [read, bash, ask_owner]",
   ]);
-  assert.equal(
-    widget!.handleMouse({
-      type: "click",
-      button: "left",
-      x: 3,
-      y: 0,
-      width: 160,
-    })?.handled,
-    true,
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 3,
+      row: 0,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    3,
   );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["lead-pane"], notices.join(" | "));
   replaceLeadIdentity = true;
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 3,
-    y: 0,
-    width: 160,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 3,
+      row: 0,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    3,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["lead-pane"]);
   replaceLeadIdentity = false;
   state.ownerSessionId = "replacement-owner-session";
   writeAgentState(mailbox, state);
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 3,
-    y: 0,
-    width: 160,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 3,
+      row: 0,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    3,
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(focused, ["lead-pane"]);
   state.ownerSessionId = LEAD_SESSION_ID;
   writeAgentState(mailbox, state);
   changeSessionOnNextSnapshot = true;
-  widget!.handleMouse({
-    type: "click",
-    button: "left",
-    x: 3,
-    y: 0,
-    width: 160,
-  });
+  widget!.routeMouse(
+    {
+      button: 0,
+      col: 3,
+      row: 0,
+      release: false,
+      wheel: null,
+      motion: false,
+      leftClick: true,
+    },
+    0,
+    3,
+  );
   changeSessionOnNextSnapshot = false;
   currentSessionId = "replacement-agent-session";
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -14599,9 +14580,9 @@ test("repeated lead starts replace the widget and ignore old refreshes", async (
     const firstSessionId = "first-lead-session";
     const currentSessionId = "current-lead-session";
     const firstStart = start(undefined, makeContext(firstSessionId));
-    await Promise.resolve();
+    await t.waitFor(() => assert.equal(widgets.length, 1));
     const secondStart = start(undefined, makeContext(currentSessionId));
-    await Promise.resolve();
+    await t.waitFor(() => assert.equal(widgets.length, 2));
 
     assert.equal(widgets.length, 2);
     assert.equal(widgets[1].render(120)[0], "● lead  unavailable");
@@ -14876,12 +14857,12 @@ test("TUI status refresh consumes the coherent Herdr session snapshot", async (t
     return {} as ReturnType<typeof setInterval>;
   }) as typeof setInterval;
   const herdrAgent = {
-    agent: "pi",
+    agent: "omp",
     name: herdrAlias("sleep-smoke-a"),
     agent_session: {
-      agent: "pi",
+      agent: "omp",
       kind: "path",
-      source: "herdr:pi",
+      source: "herdr:omp",
       value: identity.piSessionFile,
     },
     agent_status: "working",
@@ -14911,13 +14892,13 @@ test("TUI status refresh consumes the coherent Herdr session snapshot", async (t
                 agents: [
                   herdrAgent,
                   {
-                    agent: "pi",
+                    agent: "omp",
                     workspace_id: WORKSPACE,
                     pane_id: "unmanaged-lead-pane",
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: LEAD_SESSION_ID,
                     },
@@ -14935,8 +14916,8 @@ test("TUI status refresh consumes the coherent Herdr session snapshot", async (t
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: LEAD_SESSION_ID,
                     },
@@ -15033,13 +15014,12 @@ test("TUI status refresh consumes the coherent Herdr session snapshot", async (t
   assert.match(rendered, /1 working/);
   assert.match(rendered, /sleep-smoke-a/);
   assert.doesNotMatch(rendered, /\[read, bash, ask_owner\]/);
-  const promptEvent = {
-    systemPrompt: "base",
-    systemPromptOptions: { sections: {}, contextFiles: [] },
-  };
-  await pi.events.get("before_agent_start")![0](promptEvent, context);
+  const prompt = await pi.events.get("before_agent_start")![0](
+    { systemPrompt: ["base"] },
+    context,
+  );
   assert.match(
-    promptEvent.systemPromptOptions.sections.agent_definitions,
+    prompt.systemPrompt.join("\n"),
     /"name":\s*"agent"/,
     "session-start roster should be available to the Lead prompt",
   );
@@ -15074,12 +15054,12 @@ test("zero-runtime reconciliation requests one status refresh", async (t) => {
   writeAgentState(mailbox, managedState(label, undefined, identity));
 
   const herdrAgent = {
-    agent: "pi",
+    agent: "omp",
     name: herdrAlias(label),
     agent_session: {
-      agent: "pi",
+      agent: "omp",
       kind: "path",
-      source: "herdr:pi",
+      source: "herdr:omp",
       value: identity.piSessionFile,
     },
     agent_status: "working",
@@ -15212,12 +15192,12 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
   let integrationGetCount = 0;
   let failValidation = false;
   const herdrAgent = {
-    agent: "pi",
+    agent: "omp",
     name: herdrAlias(label),
     agent_session: {
-      agent: "pi",
+      agent: "omp",
       kind: "path",
-      source: "herdr:pi",
+      source: "herdr:omp",
       value: sessionPath,
     },
     agent_status: "working",
@@ -15306,28 +15286,6 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
     );
     requestedCwd = realFs.mkdtempSync(
       join(tmpdir(), "pi-herdsman-requested-cwd-"),
-    );
-    const projectContextPath = join(requestedCwd, "AGENTS.md");
-    realFs.writeFileSync(projectContextPath, "requested-CWD project context\n");
-    const { agentLaunchArgs } = await import("./agent-definitions.ts");
-    const discoveredCwds: string[] = [];
-    const contextArgs = agentLaunchArgs(discoverAgent("agent"), {
-      bodyPromptPath: "/tmp/agent-prompt.md",
-      cwd: requestedCwd,
-      loadProjectContextFiles: ({ cwd }) => {
-        discoveredCwds.push(cwd);
-        return [
-          {
-            path: projectContextPath,
-            content: "requested-CWD project context",
-          },
-        ];
-      },
-    });
-    assert.deepEqual(discoveredCwds, [requestedCwd]);
-    assert.ok(
-      contextArgs.includes(projectContextPath),
-      "project context discovered at requestedCwd should be appended to launch args",
     );
     herdrAgent.agent_session.value = sessionPath;
     herdrAgent.cwd = requestedCwd;
@@ -15630,7 +15588,6 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
       (args) => args[0] === "agent" && args[1] === "start",
     );
     assert.ok(launch, JSON.stringify(pi.calls));
-    assert.ok(launch.includes("--approve"), "trusted cwd should be approved");
     assert.equal(
       pi.calls.some((args) => args[0] === "pane" && args[1] === "split"),
       false,

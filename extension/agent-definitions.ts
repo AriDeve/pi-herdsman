@@ -1,24 +1,33 @@
 import {
   chmodSync,
   mkdirSync,
+  mkdtempSync,
   renameSync,
   readFileSync,
   readdirSync,
   statSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CONFIG_DIR_NAME,
   getAgentDir,
-  loadProjectContextFiles,
+  CURRENT_SESSION_VERSION,
+  SessionManager,
   parseFrontmatter as parsePiFrontmatter,
 } from "@earendil-works/pi-coding-agent";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import type { discoverContextFiles } from "@oh-my-pi/pi-coding-agent";
 import { snapshotTextFiles } from "./core.ts";
 import { herdsmanTempRoot } from "./storage.ts";
 
@@ -339,6 +348,7 @@ function normalizedToolNames(tools: readonly string[] | undefined): string[] {
 }
 
 export function matchesToolPattern(pattern: string, name: string): boolean {
+  if (pattern === "mcp__") return name.startsWith("mcp__");
   if (!pattern.includes("*")) return pattern === name;
   const source = pattern
     .split("*")
@@ -916,9 +926,10 @@ export type AgentLaunchOptions = {
   bodyPromptPath?: string;
   sharedPromptPath?: string;
   cwd?: string;
-  loadProjectContextFiles?: typeof loadProjectContextFiles;
+  discoverContextFiles?: typeof discoverContextFiles;
+  runtimeDirectories?: string[];
+  temporaryPaths?: string[];
   managedAgent?: boolean;
-  approveProject?: boolean;
   inheritedModel?: string;
   inheritedThinking?: string;
   requiredTools?: readonly string[];
@@ -929,16 +940,15 @@ export type AgentLaunchOptions = {
   modelDecision?: ChildModelDecision;
 };
 
-export function agentLaunchArgs(
+export async function agentLaunchArgs(
   agent: AgentDefinition,
   options: AgentLaunchOptions,
-): string[] {
+): Promise<string[]> {
   const {
     bodyPromptPath,
     sharedPromptPath,
     cwd,
     managedAgent,
-    approveProject,
     inheritedModel,
     inheritedThinking,
   } = {
@@ -946,7 +956,6 @@ export function agentLaunchArgs(
     sharedPromptPath: options.sharedPromptPath,
     cwd: options.cwd ?? process.cwd(),
     managedAgent: options.managedAgent ?? false,
-    approveProject: options.approveProject ?? false,
     inheritedModel: options.inheritedModel,
     inheritedThinking: options.inheritedThinking,
   };
@@ -957,7 +966,6 @@ export function agentLaunchArgs(
       `agent ${agent.name} has a body but no bodyPromptPath was provided`,
     );
   const args: string[] = [];
-  if (approveProject) args.push("--approve");
   const requestedModel = configuredModel(frontmatter) ?? inheritedModel;
   const decision =
     options.modelDecision ??
@@ -980,32 +988,44 @@ export function agentLaunchArgs(
     throw new Error(
       `agent ${agent.name} has invalid systemPromptMode: ${JSON.stringify(mode)}`,
     );
-  if (bodyPromptPathForLaunch !== undefined)
-    args.push(
-      mode === "append" ? "--append-system-prompt" : "--system-prompt",
-      bodyPromptPathForLaunch,
-    );
+  const appended: string[] = [];
+  if (bodyPromptPathForLaunch !== undefined) {
+    if (mode === "replace")
+      args.push("--system-prompt", bodyPromptPathForLaunch);
+    else appended.push(readFileSync(bodyPromptPathForLaunch, "utf8"));
+  }
+  const overlay: Record<string, unknown> = {};
+  // OMP-only APIs require Bun; Node can still load pure definition/presentation code.
+  const { readOmpLaunchSettings } = await import("./omp-settings.ts");
+  const { discoverContextFiles, discoverSkills, loadSkillsFromDir } =
+    await import("@earendil-works/pi-coding-agent");
+  const launchSettings = await readOmpLaunchSettings(cwd);
   const inheritProjectContext =
     frontmatter.inheritProjectContext ?? agent.name === "delegate";
   const inheritGlobalContext =
     frontmatter.inheritGlobalContext ?? inheritProjectContext;
-  if (inheritProjectContext !== true || inheritGlobalContext !== true) {
-    args.push("--no-context-files");
-    if (inheritProjectContext === true || inheritGlobalContext === true) {
-      const agentDir = getAgentDir();
-      for (const context of (
-        options.loadProjectContextFiles ?? loadProjectContextFiles
-      )({ cwd, agentDir })) {
-        const isGlobal = resolve(dirname(context.path)) === resolve(agentDir);
-        if (
-          (isGlobal && inheritGlobalContext === true) ||
-          (!isGlobal && inheritProjectContext === true)
-        )
-          args.push("--append-system-prompt", context.path);
+  if (!inheritProjectContext || !inheritGlobalContext) {
+    const disabled = new Set(launchSettings.disabledExtensions);
+    const discover = options.discoverContextFiles ?? discoverContextFiles;
+    // Disabling a winning provider can reveal a shadowed context file. Repeat
+    // native discovery until every denied scope is suppressed, not only AGENTS.md.
+    for (;;) {
+      let changed = false;
+      for (const context of await discover(cwd, getAgentDir(), [...disabled])) {
+        const scope = context.depth === undefined ? "user" : "project";
+        if (scope === "user" ? inheritGlobalContext : inheritProjectContext)
+          continue;
+        const id = `context-file:${scope}:${basename(context.path)}`;
+        if (!disabled.has(id)) {
+          disabled.add(id);
+          changed = true;
+        }
       }
+      if (!changed) break;
     }
+    overlay.disabledExtensions = [...disabled];
   }
-  if (sharedPromptPath) args.push("--append-system-prompt", sharedPromptPath);
+  if (sharedPromptPath) appended.push(readFileSync(sharedPromptPath, "utf8"));
   const requiredTools = [
     ...(managedAgent
       ? agentDefinitionDelegationEnabled(agent)
@@ -1018,27 +1038,116 @@ export function agentLaunchArgs(
   const noTools =
     frontmatter.noTools === true ||
     (policy.explicit && normalizedToolNames(frontmatter.tools).length === 0);
-  if (noTools) args.push("--no-tools");
-  if (frontmatter.noBuiltinTools) args.push("--no-builtin-tools");
-  const excluded = policy.excluded;
-  if (noTools || policy.explicit) {
-    const configured = policy.tools.filter(
-      (tool) => !managedAgent || tool !== "agent",
-    );
-    const selected = [...new Set([...configured, ...requiredTools])];
-    if (selected.length) {
-      if (!selected.some((tool) => tool.startsWith("mcp__"))) {
-        selected.push("mcp__");
-        if (!excluded.includes("mcp__")) excluded.push("mcp__");
+  const selected = [
+    ...new Set([
+      ...policy.tools.filter((tool) => !managedAgent || tool !== "agent"),
+      ...requiredTools,
+    ]),
+  ];
+  const launchPolicy: OmpLaunchPolicy = {
+    tools: noTools || policy.explicit ? selected : null,
+    excluded: policy.excluded,
+    noBuiltinTools: frontmatter.noBuiltinTools === true,
+    requiredTools,
+    skillDirectories: [],
+  };
+  // Keep native builtins registered: --no-tools removes them from getAllTools(),
+  // so the startup policy could not activate explicitly configured tools.
+  const noSkills = frontmatter.noSkills ?? frontmatter.inheritSkills !== true;
+  const explicitSkills = frontmatter.skills ?? [];
+  if (explicitSkills.length === 0) {
+    if (noSkills) args.push("--no-skills");
+  } else {
+    mkdirSync(herdsmanTempRoot(), { recursive: true, mode: 0o700 });
+    const staging = mkdtempSync(join(herdsmanTempRoot(), "skills-"));
+    chmodSync(staging, 0o700);
+    launchPolicy.skillDirectories.push(staging);
+    options.runtimeDirectories?.push(staging);
+    try {
+      for (const [index, input] of explicitSkills.entries()) {
+        const path = realpathSync(
+          resolve(
+            cwd,
+            input.startsWith("~/") ? join(homedir(), input.slice(2)) : input,
+          ),
+        );
+        const isDirectory = statSync(path).isDirectory();
+        const directory = isDirectory ? path : dirname(path);
+        const skillPath = isDirectory ? join(path, "SKILL.md") : path;
+        const parsed = parsePiFrontmatter<{ name?: string }>(
+          readFileSync(skillPath, "utf8"),
+        );
+        const target = join(
+          staging,
+          parsed.frontmatter.name ? String(index) : basename(directory),
+        );
+        if (isDirectory || basename(path) === "SKILL.md") {
+          symlinkSync(directory, target, "dir");
+        } else {
+          mkdirSync(target, { mode: 0o700 });
+          // Keep relative skill resources working while exposing just the
+          // explicitly requested Markdown file as this directory's SKILL.md.
+          for (const entry of readdirSync(directory)) {
+            if (entry === "SKILL.md") continue;
+            symlinkSync(join(directory, entry), join(target, entry));
+          }
+          symlinkSync(path, join(target, "SKILL.md"));
+        }
       }
-      args.push("--tools", selected.join(","));
+      const loaded = await loadSkillsFromDir({
+        dir: staging,
+        source: "custom:user",
+      });
+      if (
+        loaded.warnings.length ||
+        loaded.skills.length !== explicitSkills.length ||
+        new Set(loaded.skills.map((skill) => skill.name)).size !==
+          loaded.skills.length
+      )
+        throw new Error(
+          `Cannot load explicit skills for agent ${agent.name}: ${loaded.warnings.map((warning) => warning.message).join("; ") || "missing or duplicate skills"}`,
+        );
+      const inherited = noSkills
+        ? []
+        : (await discoverSkills(cwd, getAgentDir(), launchSettings.skills))
+            .skills;
+      const names = [
+        ...new Set([...inherited, ...loaded.skills].map((skill) => skill.name)),
+      ];
+      overlay.skills = {
+        ...launchSettings.skills,
+        enabled: true,
+        enableCodexUser: false,
+        enableClaudeUser: false,
+        enableClaudeProject: false,
+        enablePiUser: false,
+        enablePiProject: false,
+        enableAgentsUser: false,
+        enableAgentsProject: false,
+        customDirectories: [staging],
+        includeSkills: names.map((name) =>
+          name.replace(/[\\*?[\]{}!]/gu, "\\$&"),
+        ),
+      };
+      if (!noSkills) {
+        // Preserve inherited skill paths explicitly rather than discovering
+        // siblings of an explicitly selected file in the child.
+        for (const [index, skill] of inherited.entries()) {
+          const target = join(staging, `inherited-${index}`);
+          symlinkSync(dirname(skill.filePath), target, "dir");
+        }
+      }
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
     }
   }
-  if (excluded.length) args.push("--exclude-tools", excluded.join(","));
-
-  const noSkills = frontmatter.noSkills ?? frontmatter.inheritSkills !== true;
-  if (noSkills) args.push("--no-skills");
-  for (const skill of frontmatter.skills ?? []) args.push("--skill", skill);
+  args.push("--herdsman-launch-policy", JSON.stringify(launchPolicy));
+  if (Object.keys(overlay).length) {
+    const [config] = writePrivatePromptSnapshots([JSON.stringify(overlay)]);
+    options.temporaryPaths?.push(config!);
+    args.push("--config", config!);
+  }
 
   // A model whose provider comes from an extension cannot resolve inside a
   // child denied extension discovery, so the model's needs outrank the
@@ -1049,7 +1158,147 @@ export function agentLaunchArgs(
     args.push("--no-extensions");
   for (const extension of frontmatter.extensions ?? [])
     args.push("--extension", extension);
-  if (managedAgent)
-    args.push("--append-system-prompt", `<active_agent name="${agent.name}"/>`);
+  if (managedAgent) appended.push(`<active_agent name="${agent.name}"/>`);
+  if (appended.length) {
+    const [prompt] = writePrivatePromptSnapshots([appended.join("\n\n")]);
+    options.temporaryPaths?.push(prompt!);
+    args.push("--append-system-prompt", prompt!);
+  }
   return args;
+}
+
+/** Precreate the session identity required by a durable Manager assignment. */
+export function createOmpSessionFile(cwd: string, id: string): string {
+  const directory = SessionManager.getDefaultSessionDir(cwd);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const path = join(
+    directory,
+    `${new Date().toISOString().replace(/[:.]/gu, "-")}_${id}.jsonl`,
+  );
+  writeFileSync(
+    path,
+    `${JSON.stringify({
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id,
+      timestamp: new Date().toISOString(),
+      cwd: resolve(cwd),
+    })}\n`,
+    { encoding: "utf8", mode: 0o600, flag: "wx" },
+  );
+  return path;
+}
+
+export type OmpLaunchPolicy = {
+  tools: string[] | null;
+  excluded: string[];
+  noBuiltinTools: boolean;
+  requiredTools: string[];
+  skillDirectories: string[];
+};
+
+type OmpPolicyTool = { name: string; sourceInfo: { source: string } };
+
+export function ompLaunchTools(
+  value: OmpLaunchPolicy,
+  tools: readonly OmpPolicyTool[],
+): string[] {
+  const requested = [
+    ...value.requiredTools,
+    ...(value.tools ?? []).filter(
+      (name) => !name.includes("*") && !name.startsWith("mcp__"),
+    ),
+  ];
+  const missing = requested.filter(
+    (name) => !tools.some((tool) => tool.name === name),
+  );
+  if (missing.length)
+    throw new Error(`Missing configured Herdsman tools: ${missing.join(", ")}`);
+  return tools
+    .filter((tool) => {
+      if (value.requiredTools.includes(tool.name)) return true;
+      if (value.noBuiltinTools && tool.sourceInfo.source === "builtin")
+        return false;
+      if (
+        value.excluded.some((pattern) => matchesToolPattern(pattern, tool.name))
+      )
+        return false;
+      return (
+        value.tools === null ||
+        value.tools.some((pattern) => matchesToolPattern(pattern, tool.name))
+      );
+    })
+    .map((tool) => tool.name);
+}
+
+/** Install before role listeners so their baseline captures the restricted tools. */
+export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
+  pi.registerFlag("herdsman-launch-policy", {
+    type: "string",
+    description: "Herdsman child capability policy",
+  });
+  let cachedPolicy: OmpLaunchPolicy | null | undefined;
+  const policy = (): OmpLaunchPolicy | undefined => {
+    if (cachedPolicy !== undefined) return cachedPolicy ?? undefined;
+    const value = pi.getFlag("herdsman-launch-policy");
+    if (value === undefined) {
+      cachedPolicy = null;
+      return undefined;
+    }
+    if (typeof value !== "string")
+      throw new Error("Invalid Herdsman launch policy");
+    const parsed: unknown = JSON.parse(value);
+    if (!isPlainObject(parsed))
+      throw new Error("Invalid Herdsman launch policy");
+    const stringArray = (value: unknown): value is string[] =>
+      Array.isArray(value) && value.every((item) => typeof item === "string");
+    if (
+      (parsed.tools !== null && !stringArray(parsed.tools)) ||
+      !stringArray(parsed.excluded) ||
+      !stringArray(parsed.requiredTools) ||
+      !stringArray(parsed.skillDirectories) ||
+      typeof parsed.noBuiltinTools !== "boolean"
+    )
+      throw new Error("Invalid Herdsman launch policy");
+    if (
+      parsed.skillDirectories.some(
+        (directory) =>
+          dirname(resolve(directory)) !== resolve(herdsmanTempRoot()) ||
+          !/^skills-[A-Za-z0-9]+$/u.test(basename(directory)),
+      )
+    )
+      throw new Error("Invalid Herdsman skill directory");
+    cachedPolicy = {
+      tools: parsed.tools,
+      excluded: parsed.excluded,
+      noBuiltinTools: parsed.noBuiltinTools,
+      requiredTools: parsed.requiredTools,
+      skillDirectories: parsed.skillDirectories,
+    };
+    return cachedPolicy;
+  };
+  pi.on("session_start", async () => {
+    const value = policy();
+    if (!value) return;
+    const selected = ompLaunchTools(value, pi.getAllTools());
+    const active = new Set([...pi.getActiveTools(), ...value.requiredTools]);
+    await pi.setActiveTools(
+      value.tools === null
+        ? selected.filter((name) => active.has(name))
+        : selected,
+    );
+  });
+  pi.on("tool_call", (event) => {
+    const value = policy();
+    if (!value) return;
+    if (!ompLaunchTools(value, pi.getAllTools()).includes(event.toolName))
+      return {
+        block: true,
+        reason: `Tool ${event.toolName} is denied by the Agent definition`,
+      };
+  });
+  pi.on("session_shutdown", () => {
+    for (const directory of policy()?.skillDirectories ?? [])
+      rmSync(directory, { recursive: true, force: true });
+  });
 }

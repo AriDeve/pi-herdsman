@@ -9,8 +9,6 @@ import packageMetadata from "../package.json" with { type: "json" };
 import {
   buildSessionProjection,
   convertToLlm,
-  type BeforeAgentStartEvent,
-  type NormalizedBuildSystemPromptOptions,
 } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import { acquireProcessLock } from "./lock.ts";
@@ -21,7 +19,6 @@ import {
   isRuntimeBuild,
 } from "./compatibility.ts";
 import {
-  COORDINATION_MESSAGE_KINDS,
   claimChiefLease,
   claimManagerLease,
   listCoordinationMessagePaths,
@@ -865,19 +862,6 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
     lead.tools.find((tool) => tool.name === "list_agents")?.promptGuidelines
       ?.length,
   );
-  assert.deepEqual(
-    lead.messageRenderers.map(({ customType }) => customType).sort(),
-    [
-      "pi-herdsman-agent-ask",
-      "pi-herdsman-agent-attention",
-      "pi-herdsman-agent-lost",
-      "pi-herdsman-agent-result",
-      "pi-herdsman-agent-stale",
-      "pi-herdsman-project_message",
-      "pi-herdsman-stop-summary",
-      ...COORDINATION_MESSAGE_KINDS.map((kind) => `pi-herdsman-${kind}`),
-    ].sort(),
-  );
   const leadMessageRenderer = lead.messageRenderers.find(
     ({ customType }) => customType === "pi-herdsman-lead_message",
   )!.renderer as any;
@@ -885,19 +869,6 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
     content: "A lead message body",
     details: { fromSessionId: "lead-session" },
   };
-  const click = (button: "left" | "right") => ({
-    type: "click",
-    button,
-    x: 0,
-    y: 0,
-    screenX: 0,
-    screenY: 0,
-    width: 80,
-    height: 4,
-    shift: false,
-    alt: false,
-    ctrl: false,
-  });
   const first = leadMessageRenderer(
     leadMessage,
     { expanded: false },
@@ -907,31 +878,6 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
       bold: (text: string) => text,
     },
   );
-  const second = leadMessageRenderer(
-    leadMessage,
-    { expanded: false },
-    {
-      fg: (_color: string, text: string) => text,
-      bg: (_color: string, text: string) => text,
-      bold: (text: string) => text,
-    },
-  );
-  assert.doesNotMatch(
-    first.render(120).join("\n"),
-    /from session: lead-session/,
-  );
-  assert.equal(first.handleMouse(click("right"))?.handled, undefined);
-  assert.doesNotMatch(
-    first.render(120).join("\n"),
-    /from session: lead-session/,
-  );
-  assert.equal(first.handleMouse(click("left"))?.handled, true);
-  assert.match(first.render(120).join("\n"), /from session: lead-session/);
-  assert.doesNotMatch(
-    second.render(120).join("\n"),
-    /from session: lead-session/,
-  );
-  assert.equal(first.handleMouse(click("left"))?.handled, true);
   assert.doesNotMatch(
     first.render(120).join("\n"),
     /from session: lead-session/,
@@ -949,14 +895,8 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
     initiallyExpanded.render(120).join("\n"),
     /from session: lead-session/,
   );
-  initiallyExpanded.handleMouse(click("left"));
-  assert.doesNotMatch(
-    initiallyExpanded.render(120).join("\n"),
-    /from session: lead-session/,
-  );
   assert.equal(lead.commands.includes("subagents"), false);
   assert.equal(lead.events.has("before_agent_start"), true);
-  assert.equal(lead.events.has("context"), false);
   assert.ok(lead.events.has("session_start"));
   assert.ok(lead.events.has("session_shutdown"));
   lead.events.get("session_shutdown")?.[0]();
@@ -967,7 +907,6 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
   registerExtension!(unmanaged.pi as never);
   assert.deepEqual(unmanaged.commands, ["herdsman", "agents"]);
   assert.deepEqual(unmanaged.tools, []);
-  assert.equal(unmanaged.events.size, 0);
   const notices: string[] = [];
   const context = fakeContext() as any;
   context.hasUI = true;
@@ -992,8 +931,6 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
     ),
   );
   assert.match(notices[0]!, /inactive because .*not running inside Herdr/);
-  assert.match(notices[0]!, /herdr\n  pi/);
-  assert.match(notices[0]!, /herdr integration install pi/);
   await herdsmanCommand.handler("anything", context);
   assert.equal(notices[1], "Usage: /herdsman");
   await agentsCommand.handler("anything", context);
@@ -2141,10 +2078,10 @@ test("active chief describes authoritative remote ask projection", async () => {
   ]);
   const snapshotsBeforePreparation = pi.calls.filter(isApiSnapshot).length;
   const beforeStart = await pi.events.get("before_agent_start")![0](
-    { systemPromptOptions: { contextFiles: [] } },
+    { systemPrompt: ["base"] },
     context,
   );
-  const chiefPrompt = beforeStart?.systemPrompt;
+  const chiefPrompt = beforeStart?.systemPrompt.join("\n");
   assert.equal(beforeStart?.message, undefined);
   assert.deepEqual(installedIntervals, []);
   assert.ok(pi.calls.filter(isApiSnapshot).length > snapshotsBeforePreparation);
@@ -2247,7 +2184,7 @@ test("idle Chief supervision reconciles at the 10s cadence, not UI redraw ticks"
   context.ui.setWidget = () => undefined;
   await pi.events.get("session_start")![0](undefined, context);
   await pi.events.get("before_agent_start")![0](
-    { systemPromptOptions: { contextFiles: [] } },
+    { systemPrompt: ["base"] },
     context,
   );
   const afterPreparation = snapshotCalls;
@@ -2363,8 +2300,8 @@ test("read staff transcript advertises persisted candidates and revalidates the 
   nativeSessions.set(leadPath, { id: leadId, path: leadPath, entries: [] });
   let leadAgent: any = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: leadPath,
     },
@@ -2376,8 +2313,8 @@ test("read staff transcript advertises persisted candidates and revalidates the 
   };
   const chiefAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: chiefId,
     },
@@ -2645,8 +2582,8 @@ test("lead rejects a remote chief with mismatched physical identity", async () =
   const lease = claimChiefLease(descriptorIdentity);
   const mismatchedInventoryAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: chiefId,
     },
@@ -2824,10 +2761,10 @@ test("a replacement chief never falls back to the previous session supervision",
   let sessionId = chiefA;
   let failRefresh = false;
   const leadAgent = {
-    agent: "pi",
+    agent: "omp",
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: leadId,
     },
@@ -2868,7 +2805,7 @@ test("a replacement chief never falls back to the previous session supervision",
   const sessionStart = pi.events.get("session_start")![0];
   const beforeStart = () =>
     pi.events.get("before_agent_start")![0](
-      { systemPromptOptions: { contextFiles: [] } },
+      { systemPrompt: ["base"] },
       context,
     );
   try {
@@ -2936,10 +2873,10 @@ test("an obsolete background supervision refresh cannot publish after chief tran
   let blockNextRefresh = false;
   let releaseBlocked!: () => void;
   const leadAgent = {
-    agent: "pi",
+    agent: "omp",
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: leadId,
     },
@@ -3000,7 +2937,7 @@ test("an obsolete background supervision refresh cannot publish after chief tran
   const sessionStart = pi.events.get("session_start")![0];
   const beforeStart = () =>
     pi.events.get("before_agent_start")![0](
-      { systemPromptOptions: { contextFiles: [] } },
+      { systemPrompt: ["base"] },
       context,
     );
   try {
@@ -3087,7 +3024,7 @@ test("Chief supervision context is persistent, deduplicated, and compaction-awar
   const context = fakeContext(entries, branch) as any;
   const beforeStart = () =>
     pi.events.get("before_agent_start")![0](
-      { systemPromptOptions: { contextFiles: [] } },
+      { systemPrompt: ["base"] },
       context,
     );
 
@@ -3680,11 +3617,11 @@ test("persisted Chief keeps verified authority and mandatory tools when definiti
       true,
     );
     const prompt = await pi.events.get("before_agent_start")![0](
-      { systemPrompt: "base", systemPromptOptions: { contextFiles: [] } },
+      { systemPrompt: ["base"] },
       context,
     );
     assert.match(
-      prompt?.systemPrompt ?? "",
+      prompt.systemPrompt.join("\n"),
       /verified workspace-neutral Chief/,
     );
   } finally {
@@ -3747,22 +3684,14 @@ test("replaced Lead strategy keeps its protected charter and coordination tools"
   try {
     await pi.events.get("session_start")![0](undefined, context);
     await pi.commandOptions.get("lead").handler("orchestrate", context);
-    const event = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](event, context);
-    const sections = event.systemPromptOptions.sections;
-    assert.match(
-      sections.pi_herdsman_lead_execution ?? "",
-      /Custom Lead strategy/,
-      notices.join("\n"),
+    const prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
     );
-    assert.doesNotMatch(
-      sections.pi_herdsman_lead_execution,
-      /Partition delegable work/,
-    );
-    const charter = sections.pi_herdsman_role;
+    const generatedPrompt = prompt.systemPrompt.join("\n");
+    assert.match(generatedPrompt, /Custom Lead strategy/, notices.join("\n"));
+    assert.doesNotMatch(generatedPrompt, /Partition delegable work/);
+    const charter = generatedPrompt;
     assert.match(
       charter,
       /required project evidence is automatically inherited/,
@@ -3800,7 +3729,7 @@ test("replaced Lead strategy keeps its protected charter and coordination tools"
   }
 });
 
-test("ordinary Lead custom startup receives the exact-session definition roster", async () => {
+test("ordinary Lead startup receives the exact-session definition roster", async () => {
   setLeadEnvironment();
   process.env.HERDR_PANE_ID = "lead-pane";
   const pi = fakePi({
@@ -3824,77 +3753,39 @@ test("ordinary Lead custom startup receives the exact-session definition roster"
     getSessionId: () => sessionId,
   };
   await pi.events.get("session_start")![0](undefined, context);
-  const createPromptEvent = () =>
-    ({
-      type: "before_agent_start",
-      messageType: "custom",
-      message: {
-        role: "custom",
-        customType: "pi-herdsman-test",
-        content: "custom startup",
-        display: true,
-        timestamp: Date.now(),
-      },
-      systemPrompt: "base",
-      systemPromptOptions: {
-        cwd: context.cwd,
-        selectedTools: [],
-        hiddenTools: [],
-        toolSnippets: {},
-        toolGuidelines: {},
-        promptGuidelines: [],
-        appendSystemPrompt: "",
-        sections: {},
-        contextFiles: [],
-        skills: [],
-      } satisfies NormalizedBuildSystemPromptOptions,
-    }) satisfies BeforeAgentStartEvent;
+  const createPromptEvent = () => ({ systemPrompt: ["base"] });
   const promptEvent = createPromptEvent();
   const prompt = await pi.events.get("before_agent_start")![0](
     promptEvent,
     context,
   );
-  assert.equal(prompt, undefined);
+  assert.deepEqual(promptEvent.systemPrompt, ["base"]);
+  assert.equal(prompt.systemPrompt[0], "base");
+  const generatedPrompt = prompt.systemPrompt.join("\n");
   assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
+    generatedPrompt,
     /Use message_supervisor for material nonblocking coordination with your direct supervisor\./,
   );
+  assert.match(generatedPrompt, /integration, validation, or onward handoff/);
+  assert.match(generatedPrompt, /carry relevant evidence into onward handoffs/);
   assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /integration, validation, or onward handoff/,
-  );
-  assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /carry relevant evidence into onward handoffs/,
-  );
-  assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
+    generatedPrompt,
     /For assigned project work, automatic result handoffs contain summary text but no file attachments\./,
   );
   assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
+    generatedPrompt,
     /explicitly transfer the relevant evidence through message_supervisor\.files\./,
   );
-  assert.match(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /list_peers\/message_peer/,
+  assert.match(generatedPrompt, /list_peers\/message_peer/);
+  assert.doesNotMatch(generatedPrompt, /project-assignment delivery/);
+  assert.doesNotMatch(generatedPrompt, /available direct supervisor/);
+  const rosterPrompt = prompt.systemPrompt.find((section: string) =>
+    section.includes("This is the session-start definition snapshot."),
   );
-  assert.doesNotMatch(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /project-assignment delivery/,
-  );
-  assert.doesNotMatch(
-    promptEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /available direct supervisor/,
-  );
-  assert.match(
-    promptEvent.systemPromptOptions.sections.agent_definitions,
-    /Use list_agents for live Agent state/,
-  );
+  assert.ok(rosterPrompt);
+  assert.match(rosterPrompt, /Use list_agents for live Agent state/);
   const roster = JSON.parse(
-    promptEvent.systemPromptOptions.sections.agent_definitions.split(
-      "\n\nThis is the session-start definition snapshot.",
-    )[0],
+    rosterPrompt.split("\n\nThis is the session-start definition snapshot.")[0],
   );
   const listResult = await pi.tools
     .find((tool) => tool.name === "list_agents")!
@@ -3910,14 +3801,13 @@ test("ordinary Lead custom startup receives the exact-session definition roster"
     staleEvent,
     context,
   );
-  assert.equal(stalePrompt, undefined);
-  assert.match(
-    staleEvent.systemPromptOptions.sections.pi_herdsman_role,
-    /## Lead role/,
-  );
-  assert.equal(
-    staleEvent.systemPromptOptions.sections.agent_definitions,
-    undefined,
+  assert.equal(stalePrompt.systemPrompt[0], "base");
+  assert.match(stalePrompt.systemPrompt.join("\n"), /## Lead role/);
+  assert.ok(
+    stalePrompt.systemPrompt.every(
+      (section: string) =>
+        !section.includes("This is the session-start definition snapshot."),
+    ),
   );
   await pi.events.get("session_start")![0](undefined, context);
   const restartedEvent = createPromptEvent();
@@ -3925,9 +3815,12 @@ test("ordinary Lead custom startup receives the exact-session definition roster"
     restartedEvent,
     context,
   );
-  assert.equal(restartedPrompt, undefined);
-  assert.ok(restartedEvent.systemPromptOptions.sections.agent_definitions);
-  assert.equal(pi.events.has("context"), false);
+  assert.equal(restartedPrompt.systemPrompt[0], "base");
+  assert.ok(
+    restartedPrompt.systemPrompt.some((section: string) =>
+      section.includes("This is the session-start definition snapshot."),
+    ),
+  );
   pi.events.get("session_shutdown")?.[0]();
   delete process.env.HERDR_PANE_ID;
 });
@@ -3962,44 +3855,30 @@ test("delegating agents receive only their allowed definition roster", async () 
   await sessionStartHandlers[0](undefined, context);
   assert.ok(readAgentState(mailbox), "fresh managed agent was not initialized");
   const contextHandlers = pi.events.get("context") ?? [];
-  assert.equal(contextHandlers.length, 1);
   const ordinaryContext = {
     messages: [{ role: "user", content: "ordinary turn" }],
   };
-  assert.equal(contextHandlers[0](ordinaryContext, context), undefined);
-  const event: any = {
-    systemPromptOptions: { sections: {}, contextFiles: [] },
-  };
+  for (const handler of contextHandlers) {
+    const result = handler(ordinaryContext, context);
+    if (result) assert.deepEqual(result.messages, ordinaryContext.messages);
+  }
+  const event = { systemPrompt: ["base"] };
   const prompt = await pi.events.get("before_agent_start")![0](event, context);
-  assert.equal(prompt, undefined);
-  assert.match(
-    event.systemPromptOptions.sections.pi_herdsman_agent,
-    /identity: agent:delegating-agent/,
+  assert.deepEqual(event.systemPrompt, ["base"]);
+  assert.equal(prompt.systemPrompt[0], "base");
+  const generatedPrompt = prompt.systemPrompt.join("\n");
+  assert.match(generatedPrompt, /identity: agent:delegating-agent/);
+  assert.match(generatedPrompt, /direct_owner: lead/);
+  assert.match(generatedPrompt, /## Delegating agent role/);
+  assert.match(generatedPrompt, /integration, validation, or onward handoff/);
+  assert.doesNotMatch(generatedPrompt, /message_supervisor/);
+  const rosterPrompt = prompt.systemPrompt.find((section: string) =>
+    section.includes("This is the session-start definition snapshot."),
   );
-  assert.match(
-    event.systemPromptOptions.sections.pi_herdsman_agent,
-    /direct_owner: lead/,
-  );
-  assert.match(
-    event.systemPromptOptions.sections.delegating_agent_role,
-    /## Delegating agent role/,
-  );
-  assert.match(
-    event.systemPromptOptions.sections.delegating_agent_role,
-    /integration, validation, or onward handoff/,
-  );
-  assert.doesNotMatch(
-    event.systemPromptOptions.sections.delegating_agent_role,
-    /message_supervisor/,
-  );
-  assert.match(
-    event.systemPromptOptions.sections.agent_definitions,
-    /Use list_agents for live Agent state/,
-  );
+  assert.ok(rosterPrompt);
+  assert.match(rosterPrompt, /Use list_agents for live Agent state/);
   const roster = JSON.parse(
-    event.systemPromptOptions.sections.agent_definitions.split(
-      "\n\nThis is the session-start definition snapshot.",
-    )[0],
+    rosterPrompt.split("\n\nThis is the session-start definition snapshot.")[0],
   );
   assert.equal(
     pi.sentMessageCalls.some(
@@ -4015,9 +3894,7 @@ test("delegating agents receive only their allowed definition roster", async () 
   assert.equal(roster[0].model, undefined);
   assert.equal(roster[0].thinking, undefined);
   assert.doesNotMatch(
-    event.systemPromptOptions.sections.agent_definitions.split(
-      "\n\nThis is the session-start definition snapshot.",
-    )[0],
+    rosterPrompt.split("\n\nThis is the session-start definition snapshot.")[0],
     /\n/,
   );
   const listResult = await pi.tools
@@ -4165,8 +4042,8 @@ test("replaced Manager body keeps its protected prompt contract and tools", asyn
     tab_id: process.env.HERDR_TAB_ID,
     workspace_id: WORKSPACE,
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: LEAD_SESSION_ID,
     },
@@ -4209,12 +4086,11 @@ test("replaced Manager body keeps its protected prompt contract and tools", asyn
       "manager",
       notices.join("\n"),
     );
-    const event = {
-      systemPrompt: "base",
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](event, context);
-    const prompt = event.systemPromptOptions.sections.pi_herdsman_role;
+    const result = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
+    );
+    const prompt = result.systemPrompt.join("\n");
     assert.match(prompt, /verified Manager for this Pi session/);
     assert.match(prompt, /Supervision is event-driven/);
     assert.match(prompt, /Custom Manager strategy/);
@@ -4278,8 +4154,8 @@ test("delegating agents do not receive Manager supervisor projections", async ()
   });
   const managerAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: managerId,
     },
@@ -4289,8 +4165,8 @@ test("delegating agents do not receive Manager supervisor projections", async ()
   };
   const delegateAgent = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: sessionId,
     },
@@ -4377,14 +4253,11 @@ test("delegating agents do not receive Manager supervisor projections", async ()
     const sessionStartHandlers = pi.events.get("session_start") ?? [];
     assert.equal(sessionStartHandlers.length, 1);
     await sessionStartHandlers[0](undefined, context);
-    const event: any = {
-      systemPromptOptions: { sections: {}, contextFiles: [] },
-    };
-    await pi.events.get("before_agent_start")![0](event, context);
-    assert.match(
-      event.systemPromptOptions.sections.pi_herdsman_agent,
-      /direct_owner: lead/,
+    const prompt = await pi.events.get("before_agent_start")![0](
+      { systemPrompt: ["base"] },
+      context,
     );
+    assert.match(prompt.systemPrompt.join("\n"), /direct_owner: lead/);
     assert.equal(
       pi.sentMessageCalls.some(
         ({ message }: any) =>
@@ -4478,31 +4351,21 @@ test("leaf agents and active Chiefs do not receive agent definition rosters", as
   registerExtension!(leaf.pi as never);
   assert.equal(leaf.events.has("before_agent_start"), true);
   const leafContext = fakeContext() as any;
-  const leafEvent: any = {
-    systemPromptOptions: {
-      sections: {
-        delegating_agent_role: "earlier extension role",
-        agent_definitions: "earlier extension definitions",
-      },
-      contextFiles: [],
-    },
+  const leafEvent = {
+    systemPrompt: ["earlier extension role", "earlier extension definitions"],
   };
-  await leaf.events.get("before_agent_start")![0](leafEvent, leafContext);
-  assert.match(
-    leafEvent.systemPromptOptions.sections.pi_herdsman_agent,
-    /identity: agent:leaf-agent/,
+  const leafPrompt = await leaf.events.get("before_agent_start")![0](
+    leafEvent,
+    leafContext,
   );
-  assert.match(
-    leafEvent.systemPromptOptions.sections.pi_herdsman_agent,
-    /direct_owner: lead/,
-  );
-  assert.equal(
-    leafEvent.systemPromptOptions.sections.delegating_agent_role,
-    "earlier extension role",
-  );
-  assert.equal(
-    leafEvent.systemPromptOptions.sections.agent_definitions,
-    "earlier extension definitions",
+  const generatedPrompt = leafPrompt.systemPrompt.join("\n");
+  assert.match(generatedPrompt, /identity: agent:leaf-agent/);
+  assert.match(generatedPrompt, /direct_owner: lead/);
+  assert.deepEqual(leafPrompt.systemPrompt.slice(0, 2), leafEvent.systemPrompt);
+  assert.doesNotMatch(generatedPrompt, /## Delegating agent role/);
+  assert.doesNotMatch(
+    generatedPrompt,
+    /This is the session-start definition snapshot\./,
   );
   leaf.events.get("session_shutdown")?.[0]();
   resetAgentMailbox(mailbox);
@@ -4533,11 +4396,14 @@ test("leaf agents and active Chiefs do not receive agent definition rosters", as
   const context = fakeContext(entries) as any;
   await chief.events.get("session_start")![0](undefined, context);
   const prompt = await chief.events.get("before_agent_start")![0](
-    { systemPromptOptions: { contextFiles: [] } },
+    { systemPrompt: ["base"] },
     context,
   );
-  assert.match(prompt?.systemPrompt ?? "", /Chief/);
-  assert.doesNotMatch(prompt?.systemPrompt ?? "", /<agent_definitions>/);
+  assert.match(prompt?.systemPrompt.join("\n") ?? "", /Chief/);
+  assert.doesNotMatch(
+    prompt?.systemPrompt.join("\n") ?? "",
+    /<agent_definitions>/,
+  );
   assert.equal(prompt?.message, undefined);
   const contextCall = chief.sentMessageCalls.findLast(
     ({ message }: any) =>
@@ -4582,7 +4448,7 @@ test("first failed chief supervision refresh is explicitly unavailable", async (
   const context = fakeContext(entries) as any;
   await pi.events.get("session_start")![0](undefined, context);
   const result = await pi.events.get("before_agent_start")![0](
-    { systemPromptOptions: { contextFiles: [] } },
+    { systemPrompt: ["base"] },
     context,
   );
   assert.equal(result?.message, undefined);
@@ -4752,8 +4618,8 @@ test("list ignores an unrelated unnamed Herdr agent", async () => {
                     pane_id: "lead-pane",
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: LEAD_SESSION_ID,
                     },
@@ -4766,8 +4632,8 @@ test("list ignores an unrelated unnamed Herdr agent", async () => {
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: LEAD_SESSION_ID,
                     },
@@ -4804,7 +4670,6 @@ test("invalid agent owner identity registers no managed agent hooks", () => {
   registerExtension!(invalid.pi as never);
   assert.equal(invalid.tools.length, 0);
   assert.equal(invalid.events.has("before_agent_start"), false);
-  assert.equal(invalid.events.size, 1);
   assert.equal(readAgentState(mailbox), undefined);
 
   const missingDisplayMailbox = setAgentEnvironment();
@@ -5137,10 +5002,10 @@ for (const delegationEnabled of [false, true]) {
       }),
     );
     const identity = {
-      agent: "pi",
+      agent: "omp",
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: agentSessionId,
       },
@@ -5151,10 +5016,10 @@ for (const delegationEnabled of [false, true]) {
       agent_status: "idle",
     };
     const lead = {
-      agent: "pi",
+      agent: "omp",
       agent_session: {
-        source: "herdr:pi",
-        agent: "pi",
+        source: "herdr:omp",
+        agent: "omp",
         kind: "id",
         value: ownerSessionId,
       },
@@ -5187,12 +5052,12 @@ for (const delegationEnabled of [false, true]) {
                       {
                         pane_id: agentPaneId,
                         workspace_id: WORKSPACE,
-                        agent: "pi",
+                        agent: "omp",
                       },
                       {
                         pane_id: leadPaneId,
                         workspace_id: WORKSPACE,
-                        agent: "pi",
+                        agent: "omp",
                       },
                     ],
                   },
@@ -5246,6 +5111,7 @@ for (const delegationEnabled of [false, true]) {
     };
     writeLeadCoordinationState(supervisionRuntime(), {
       version: 1,
+      role: "lead",
       build: HERDSMAN_BUILD,
       instanceId: randomUUID(),
       piSessionId: ownerSessionId,

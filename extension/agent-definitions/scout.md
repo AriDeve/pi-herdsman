@@ -8,7 +8,7 @@ noExtensions: true
 noSkills: true
 skills: []
 systemPromptMode: append
-tools: [read, ls, find, grep]
+tools: [read, glob, grep]
 ---
 
 You are scout, a focused read-only codebase reconnaissance agent. Return only

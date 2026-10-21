@@ -18,7 +18,12 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { Box as TuiBox, Component } from "@earendil-works/pi-tui";
+import type {
+  Box as TuiBox,
+  Component,
+  MouseRoutable,
+  SgrMouseEvent,
+} from "@earendil-works/pi-tui";
 import type {
   Theme,
   ExtensionAPI,
@@ -298,22 +303,15 @@ export function collapseDisplayText(
     : `${characters.slice(0, Math.max(0, maxCharacters - 1)).join("")}…`;
 }
 
-export function nameSessionIfUnset(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
+export async function nameSessionIfUnset(
+  pi: Pick<ExtensionAPI, "getSessionName" | "setSessionName">,
   title: string,
-): void {
+): Promise<void> {
   const name = collapseDisplayText(title);
   if (!name) return;
 
   try {
-    if (
-      !ctx.sessionManager
-        .getEntries()
-        .some((entry) => entry.type === "session_info")
-    ) {
-      pi.setSessionName(name);
-    }
+    if (!pi.getSessionName()) await pi.setSessionName(name);
   } catch {
     // Session naming must never interrupt orchestration.
   }
@@ -1461,22 +1459,11 @@ export function createSupervisionWidget(
   role: "chief" | "manager" = "chief",
   theme?: any,
   onFocus?: (intent: FocusIntent) => void,
-): {
-  render(width: number): string[];
-  handleMouse(event: {
-    type: string;
-    button: string;
-    width: number;
-    x: number;
-    y: number;
-  }): { handled: true; render: false } | undefined;
-  invalidate(): void;
-} {
-  let renderedWidth = -1;
+): Component & MouseRoutable {
   let hits: HitRegion[] = [];
   return {
     render(width) {
-      renderedWidth = width;
+      const renderedWidth = width;
       const rows = renderSupervisionRows(getLeads(), width, {
         status: getStatus(),
         ordinaryCap: 6,
@@ -1493,26 +1480,19 @@ export function createSupervisionWidget(
           hits.push({
             row: index,
             from: 0,
-            to: Math.min(width, visibleWidth(row.text)),
+            to: Math.min(renderedWidth, visibleWidth(row.text)),
             intent: row.intent,
           });
       });
       return rows.map(({ text }) => text);
     },
-    handleMouse(event) {
-      if (
-        event.type !== "click" ||
-        event.button !== "left" ||
-        event.width !== renderedWidth
-      )
-        return;
+    routeMouse(event, line, col) {
+      if (!event.leftClick) return;
       const hit = hits.find(
-        ({ row, from, to }) =>
-          row === event.y && event.x >= from && event.x < to,
+        ({ row, from, to }) => row === line && col >= from && col < to,
       );
       if (!hit || !onFocus) return;
       onFocus(hit.intent);
-      return { handled: true, render: false };
     },
     invalidate() {},
   };
@@ -3772,7 +3752,7 @@ export function renderAgentLostMessage(
 }
 
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export class StatusWidget {
+export class StatusWidget implements Component, MouseRoutable {
   private snapshot: StatusSnapshot = {
     agents: [],
     stale: false,
@@ -3783,7 +3763,6 @@ export class StatusWidget {
   private invalidateUI?: () => void;
   private theme: any;
   private onFocus?: (intent: FocusIntent) => void;
-  private renderedWidth = -1;
   private hits: HitRegion[] = [];
   constructor(
     invalidateUI?: () => void,
@@ -3800,7 +3779,6 @@ export class StatusWidget {
   setSnapshot(snapshot: StatusSnapshot): void {
     this.snapshot = snapshot;
     this.hits = [];
-    this.renderedWidth = -1;
     const animated = snapshot.agents.some(
       (agent) =>
         agent.state === "working" ||
@@ -3823,7 +3801,6 @@ export class StatusWidget {
   }
   render(width: number): string[] {
     const s = this.snapshot;
-    this.renderedWidth = width;
     this.hits = [];
     const suffix = s.unavailable
       ? "unavailable"
@@ -3930,25 +3907,13 @@ export class StatusWidget {
       });
     return out;
   }
-  handleMouse(event: {
-    type: string;
-    button: string;
-    width: number;
-    x: number;
-    y: number;
-  }): { handled: true; render: false } | undefined {
-    if (
-      event.type !== "click" ||
-      event.button !== "left" ||
-      event.width !== this.renderedWidth
-    )
-      return;
+  routeMouse(event: SgrMouseEvent, line: number, col: number): void {
+    if (!event.leftClick) return;
     const hit = this.hits.find(
-      ({ row, from, to }) => row === event.y && event.x >= from && event.x < to,
+      ({ row, from, to }) => row === line && col >= from && col < to,
     );
     if (!hit || !this.onFocus) return;
     this.onFocus(hit.intent);
-    return { handled: true, render: false };
   }
   dispose(): void {
     if (this.timer) clearInterval(this.timer);
@@ -3956,7 +3921,6 @@ export class StatusWidget {
     this.invalidateUI = undefined;
     this.onFocus = undefined;
     this.hits = [];
-    this.renderedWidth = -1;
   }
 }
 export function createStatusWidget(

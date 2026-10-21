@@ -9,13 +9,13 @@ user-wide file:
 <Pi agent directory>/pi-herdsman/config.json
 ```
 
-The default location is `~/.pi/agent/pi-herdsman/config.json`. Pi's native
+The default location is `~/.omp/agent/pi-herdsman/config.json`. OMP's native
 `getAgentDir()` determines the agent directory, so setting
 `PI_CODING_AGENT_DIR` relocates the file to
 `$PI_CODING_AGENT_DIR/pi-herdsman/config.json`.
 
 Two preferences can be overridden for a trusted project in Pi's
-`<project>/.pi/settings.json`:
+`<project>/.omp/settings.json`:
 
 ```json
 {
@@ -33,7 +33,7 @@ explicit `false` overrides global `true`. Project overrides apply only when Pi
 considers the current project trusted. An untrusted project or an absent
 project override inherits the global value; malformed trusted project settings
 raise a configuration error instead of falling back. The rest of
-`.pi/settings.json` remains Pi-owned. Agent definitions are separate and
+`.omp/settings.json` remains OMP-owned. Agent definitions are separate and
 continue to use the bundled, project-local, and user agent-definition
 locations described in the
 [agent-definition guide](../guides/agent-definitions.md).
@@ -112,10 +112,8 @@ project property. Global controls remain independent, and an explicit project
 value takes precedence over the global value. Untrusted projects cannot be read
 or edited through this menu. Changes follow the existing preference evaluation
 lifecycle and do not retroactively change an already-running role or operation.
-Updates to an existing project settings file coordinate with Pi's settings
-lock. With Pi 1.3.0, concurrent independent writers can still race when
-creating a missing `.pi/settings.json`, because Pi reads the missing file before
-acquiring that lock.
+Project override writes preserve unrelated JSON keys. OMP's ordinary settings
+edits target `config.yml`; Herdsman's project preferences use `.omp/settings.json`.
 
 Placement affects future starts, not existing agents. `tab` uses one lead-owned
 agents tab, `subtree` gives each lead-direct agent its own tab, and `split`

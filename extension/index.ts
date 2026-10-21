@@ -1,15 +1,14 @@
 import type {
-  BuildSystemPromptOptions,
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { contentText, StringEnum } from "@earendil-works/pi-ai";
 import {
-  buildSessionProjection,
+  buildSessionContext,
+  discoverContextFiles,
   getAgentDir,
   getSelectListTheme,
-  SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { readFileSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -17,6 +16,13 @@ import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import packageMetadata from "../package.json" with { type: "json" };
+import { registerOmpRuntime } from "./omp-runtime.ts";
+import { readOmpLaunchSettings } from "./omp-settings.ts";
+import {
+  findSessionFileById,
+  inspectSessionFile,
+  type ForeignSessionSnapshot,
+} from "./foreign-session.ts";
 import {
   formatRuntimeBuild,
   runtimeBuild,
@@ -37,7 +43,6 @@ import {
   fuzzyFilter,
   Input,
   Key,
-  MouseRegion,
   matchesKey,
   SelectList,
   Spacer,
@@ -86,6 +91,7 @@ import {
 } from "./core.ts";
 import {
   AGENT_COORDINATION_TOOLS,
+  registerOmpLaunchPolicy,
   agentLaunchArgs,
   agentDefinitionEnabled,
   agentDefinitionDelegationEnabled,
@@ -302,22 +308,11 @@ import type { SupervisionContextStatus } from "./presentation.ts";
 const HERDSMAN_VERSION = packageMetadata.version;
 
 function expandablePresentation(
-  initialExpanded: boolean,
+  expanded: boolean,
   render: (expanded: boolean) => Component,
-): MouseRegion {
-  let expanded = initialExpanded;
-  const content = new Container();
-  const rebuild = () => {
-    content.clear();
-    content.addChild(render(expanded));
-  };
-  rebuild();
-  return new MouseRegion(content, (event) => {
-    if (event.type !== "click" || event.button !== "left") return undefined;
-    expanded = !expanded;
-    rebuild();
-    return { handled: true };
-  });
+): Component {
+  // OMP owns expansion through its native transcript controls.
+  return render(expanded);
 }
 
 const HERDSMAN_EXTENSION_PATH = fileURLToPath(import.meta.url);
@@ -478,7 +473,7 @@ async function messageLimits(
   };
 }
 function retiredManagedSession(
-  manager: Pick<SessionManager, "getEntries" | "getSessionId">,
+  manager: Pick<ForeignSessionSnapshot, "getEntries" | "getSessionId">,
 ): boolean {
   const sessionId = manager.getSessionId();
   const entries = manager.getEntries();
@@ -507,7 +502,7 @@ function collectOwnedSessionUsage(
       // This ID remains unresolved unless another exact path proves it.
     }
   }
-  const roots: SessionManager[] = [];
+  const roots: ForeignSessionSnapshot[] = [];
   let complete = true;
   for (const [id, paths] of pathsById) {
     if (paths.size !== 1) {
@@ -515,7 +510,7 @@ function collectOwnedSessionUsage(
       continue;
     }
     try {
-      const manager = SessionManager.open(paths.values().next().value!);
+      const manager = inspectSessionFile(paths.values().next().value!);
       if (manager.getSessionId() !== id) {
         complete = false;
         continue;
@@ -678,7 +673,59 @@ type StopReportCallbacks = {
   onCleanupFailure?: (label: string, message: string) => void;
 };
 
+const runtimeOwner = Symbol.for("pi-herdsman:runtime-owner");
+
 export default function (pi: ExtensionAPI): void {
+  // OMP can discover a linked plugin and its explicit realpath as two factories.
+  // Ownership belongs to the session bus, not either module's private state.
+  const session = pi.events as typeof pi.events & {
+    [runtimeOwner]?: ExtensionAPI;
+  };
+  if (session[runtimeOwner]) return;
+  session[runtimeOwner] = pi;
+  const release = () => {
+    if (session[runtimeOwner] === pi) delete session[runtimeOwner];
+  };
+  try {
+    registerHerdsman(pi);
+    pi.on("session_shutdown", release);
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+function registerHerdsman(pi: ExtensionAPI): void {
+  registerOmpRuntime(pi);
+  registerOmpLaunchPolicy(pi);
+  const appendEntry = pi.appendEntry.bind(pi);
+  pi.appendEntry = (customType, data) => {
+    appendEntry(customType, data);
+    if (
+      customType === AGENT_DEFINITIONS_ENTRY ||
+      (customType === HERD_RUN_ENTRY &&
+        data &&
+        typeof data === "object" &&
+        "phase" in data &&
+        data.phase === "finished")
+    )
+      pi.sendMessage(
+        {
+          customType: `pi-herdsman-display:${customType}`,
+          content: "",
+          details: data,
+          display: true,
+        },
+        { triggerTurn: false },
+      );
+  };
+  pi.on("context", (event) => ({
+    messages: event.messages.filter(
+      (message) =>
+        message.role !== "custom" ||
+        !message.customType.startsWith("pi-herdsman-display:"),
+    ),
+  }));
   let leadRuntimes!: ReturnType<typeof registerLeadRuntime>;
   let leadStatusRuntime: ReturnType<
     typeof registerLeadRuntime
@@ -702,32 +749,36 @@ export default function (pi: ExtensionAPI): void {
     });
     return;
   }
-  pi.registerEntryRenderer(AGENT_DEFINITIONS_ENTRY, (entry, options, theme) => {
-    const definitions = entry?.data?.definitions;
-    if (
-      !Array.isArray(definitions) ||
-      !definitions.every(
-        (definition) =>
-          definition !== null &&
-          typeof definition === "object" &&
-          !Array.isArray(definition),
+  pi.registerMessageRenderer(
+    `pi-herdsman-display:${AGENT_DEFINITIONS_ENTRY}`,
+    (entry, options, theme) => {
+      const data = entry.details as Record<string, unknown> | undefined;
+      const definitions = data?.definitions;
+      if (
+        !Array.isArray(definitions) ||
+        !definitions.every(
+          (definition) =>
+            definition !== null &&
+            typeof definition === "object" &&
+            !Array.isArray(definition),
+        )
       )
-    )
-      return undefined;
-    const instructions =
-      typeof entry?.data?.instructions === "string"
-        ? entry.data.instructions
-        : undefined;
-    return expandablePresentation(options.expanded, (expanded) =>
-      renderAgentDefinitionsOverview(definitions, theme, {
-        ...options,
-        expanded,
-        instructions,
-      }),
-    );
-  });
-  pi.registerEntryRenderer(HERD_RUN_ENTRY, (entry, _options, theme) =>
-    renderHerdRunEntry(entry, theme),
+        return undefined;
+      const instructions =
+        typeof data?.instructions === "string" ? data.instructions : undefined;
+      return expandablePresentation(options.expanded, (expanded) =>
+        renderAgentDefinitionsOverview(definitions, theme, {
+          ...options,
+          expanded,
+          instructions,
+        }),
+      );
+    },
+  );
+  pi.registerMessageRenderer(
+    `pi-herdsman-display:${HERD_RUN_ENTRY}`,
+    (message, _options, theme) =>
+      renderHerdRunEntry({ data: message.details }, theme),
   );
   for (const kind of COORDINATION_MESSAGE_KINDS) {
     pi.registerMessageRenderer(
@@ -806,7 +857,7 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       ctx.ui.notify(
-        `Pi Herdsman v${HERDSMAN_VERSION} is inactive because this Pi session is not running inside Herdr.\n\nStart Herdr in this project, then run Pi in a Herdr pane:\n  herdr\n  pi\n\nIf needed, install the Pi integration once:\n  herdr integration install pi`,
+        `Pi Herdsman v${HERDSMAN_VERSION} is inactive because this OMP session is not running inside Herdr.\n\nStart Herdr in this project, then run OMP in a Herdr pane:\n  herdr\n  omp\n\nIf needed, install the OMP integration once:\n  herdr integration install omp`,
       );
     };
     const setupCommand = {
@@ -939,7 +990,7 @@ export default function (pi: ExtensionAPI): void {
     sessionRetired: (ctx, runtime) => {
       if (!runtime.piSessionFile) return false;
       try {
-        const session = SessionManager.open(runtime.piSessionFile);
+        const session = inspectSessionFile(runtime.piSessionFile);
         if (!retiredManagedSession(session)) return false;
         return sameCwd(ctx.cwd, session.getCwd())
           ? readEffectiveConfig(ctx).contextRetirement
@@ -1087,9 +1138,7 @@ export default function (pi: ExtensionAPI): void {
     listProjectAssignments,
     projectWorkSnapshot,
     supervisedSessionFile: (agent, sessionId) =>
-      supervisedSessionFile(agent, sessionId, (cwd, id) =>
-        SessionManager.findById(cwd, id),
-      ),
+      supervisedSessionFile(agent, sessionId, findSessionFileById),
     statSync,
     workspacePresentationProvenance,
     normalizeHerdrLifecycleState,
@@ -1145,36 +1194,38 @@ export default function (pi: ExtensionAPI): void {
   const normalizeLeadTools = (tools: readonly string[]): string[] =>
     leadToolState.normalizeLeadTools(tools);
   let roleTransitions: ReturnType<typeof createLeadRoleTransitions>;
-  const reconcileRoleTools = (): void => roleTransitions.reconcileRoleTools();
+  const reconcileRoleTools = (): Promise<void> =>
+    roleTransitions.reconcileRoleTools();
   const isCurrentChief = (ctx: ExtensionContext): boolean =>
     leadRuntime.chiefMode === "active" &&
     !!leadRuntime.chiefLease &&
     leadRuntime.chiefLease.descriptor.piSessionId ===
       ctx.sessionManager.getSessionId();
-  const chiefSystemPrompt = (
-    options: BuildSystemPromptOptions | undefined,
+  const chiefSystemPrompt = async (
+    ctx: ExtensionContext,
     body: string,
-  ): string => {
+  ): Promise<string[]> => {
     const agentDir = resolve(getAgentDir());
-    const globalInstructions = (options?.contextFiles ?? [])
+    const globalInstructions = (
+      await discoverContextFiles(
+        ctx.cwd,
+        getAgentDir(),
+        (await readOmpLaunchSettings(ctx.cwd)).disabledExtensions,
+      )
+    )
       .filter(
         ({ path, content }) =>
-          typeof path === "string" &&
-          typeof content === "string" &&
-          resolve(dirname(path)) === agentDir &&
-          content.length > 0,
+          resolve(dirname(path)) === agentDir && content.length > 0,
       )
       .map(({ content }) => content)
       .join("\n\n");
     return [
       CHIEF_ROLE_CONTRACT,
-      body || undefined,
+      body,
       globalInstructions
         ? `## global user instructions\n\n<global_instructions>\n${globalInstructions}\n</global_instructions>`
-        : undefined,
-    ]
-      .filter((section): section is string => section !== undefined)
-      .join("\n\n");
+        : "",
+    ].filter(Boolean);
   };
   const markLeadCoordinationUnhealthy = (ctx?: ExtensionContext): void =>
     leadRuntimes.coordinationRuntime!.markLeadCoordinationUnhealthy(ctx);
@@ -1230,7 +1281,6 @@ export default function (pi: ExtensionAPI): void {
     paneId: () => process.env.HERDR_PANE_ID,
     getSessionName: () => pi.getSessionName(),
     runHerdr,
-    SessionManager,
     reportLeadMetadata,
     workspaceId: () => process.env.HERDR_WORKSPACE_ID,
     identity: {
@@ -1370,7 +1420,6 @@ export default function (pi: ExtensionAPI): void {
       expectedSession,
       build: HERDSMAN_BUILD,
       extensionPath: HERDSMAN_EXTENSION_PATH,
-      SessionManager,
       truncateModelText,
       inspectHerdrAgent,
       readPersistedTranscript: (target) =>
@@ -2178,7 +2227,7 @@ export default function (pi: ExtensionAPI): void {
           messageLimits,
           chiefMessageBytes,
           coordinationMessageMaxBytes: COORDINATION_MESSAGE_MAX_BYTES,
-          buildSessionProjection,
+          buildSessionContext,
           contentText,
           supervisorStateType: SUPERVISOR_STATE_TYPE,
           sameManagerDescriptor,

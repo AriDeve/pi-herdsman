@@ -54,13 +54,13 @@ dist/agent-definitions/
 Global definitions by default:
 
 ```text
-~/.pi/agent/agents/
+~/.omp/agent/agents/
 ```
 
 A matching project or global name overlays the lower-precedence definition.
 
 An unmatched project or global definition is standalone. Project definitions
-are loaded from `<cwd>/.pi/agents/` when Pi considers the project trusted.
+are loaded from `<cwd>/.omp/agents/` when OMP considers the project trusted.
 Precedence is `bundled < project < global`.
 
 All effective Agent definitions are sorted and validated together, including
@@ -186,10 +186,10 @@ the fallback.
 | `thinking`              | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `false` | spawning controller for fresh `delegate`; saved session for `continue` | Explicit value wins; `false` launches as `off`.                                                                                                                                           |
 | `systemPromptMode`      | `append` or `replace`                                                 | `append`                                                               | Controls whether the effective body is appended to or replaces Pi's base system prompt. `replace` is an explicit escape hatch for ordinary custom definitions; `managed-lead` rejects it. |
 | `bodyMode`              | `append` or `replace`                                                 | `replace` for non-empty matching overlay body                          | Valid only when overlaying an existing lower-precedence definition; consumed during body composition.                                                                                     |
-| `noTools`               | boolean                                                               | Pi normal tool policy                                                  | `true` emits `--no-tools`; managed `ask_owner` remains infrastructure.                                                                                                                    |
-| `noBuiltinTools`        | boolean                                                               | Pi normal built-in tool policy                                         | `true` emits `--no-builtin-tools`.                                                                                                                                                        |
-| `tools`                 | array of non-empty strings                                            | no explicit allowlist                                                  | Passed to Pi as a source-agnostic tool-name allowlist; matching overlay replaces whole array.                                                                                             |
-| `excludeTools`          | array of non-empty strings                                            | no explicit exclusions                                                 | Passed to Pi as source-agnostic tool-name exclusions; matching override replaces whole array.                                                                                             |
+| `noTools`               | boolean                                                               | OMP normal tool policy                                                 | Disables inherited tools; explicitly allowed tools and required managed infrastructure remain available. Applied at runtime without removing builtin registrations.                       |
+| `noBuiltinTools`        | boolean                                                               | OMP normal built-in tool policy                                        | Excludes tools whose registry provenance is builtin, except required managed infrastructure.                                                                                              |
+| `tools`                 | array of non-empty strings                                            | no explicit allowlist                                                  | Runtime source-agnostic tool-name allowlist; matching overlay replaces the whole array.                                                                                                   |
+| `excludeTools`          | array of non-empty strings                                            | no explicit exclusions                                                 | Runtime source-agnostic tool-name exclusions; matching override replaces the whole array.                                                                                                 |
 | `permission`            | mapping                                                               | absent                                                                 | Opaque interoperability policy for permission-aware extensions; Pi Herdsman does not evaluate it.                                                                                         |
 | `noSkills`              | boolean                                                               | skills disabled unless `inheritSkills: true`                           | Controls Pi native skill discovery; explicit `skills` values are still passed separately.                                                                                                 |
 | `inheritSkills`         | boolean                                                               | does not enable by itself unless `true`                                | `true` changes omitted `noSkills` default so native skills remain available. Explicit `noSkills` wins.                                                                                    |

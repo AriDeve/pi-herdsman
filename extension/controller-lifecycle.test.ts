@@ -14,10 +14,6 @@ import { mock, test } from "node:test";
 import type { TestContext } from "node:test";
 import { Value } from "typebox/value";
 import type {
-  BeforeAgentStartEvent,
-  NormalizedBuildSystemPromptOptions,
-} from "@earendil-works/pi-coding-agent";
-import type {
   AskRecord,
   RequestRecord,
   ResultRecord,
@@ -238,7 +234,6 @@ test("parent delegates two same-definition children with exact ownership", async
     provider: "parent-provider",
     id: "parent-model",
   };
-  (context as any).thinkingLevel = "high";
   const mailboxes: string[] = [];
   try {
     for (const handler of pi.events.get("session_start") ?? [])
@@ -2069,8 +2064,8 @@ test("fresh path sessions remain controllable after controller cache loss", asyn
     for (const agent of agents)
       if (agent?.agent_session)
         agent.agent_session = {
-          source: "herdr:pi",
-          agent: "pi",
+          source: "herdr:omp",
+          agent: "omp",
           kind: "path",
           value: sessionPath,
         };
@@ -5930,8 +5925,8 @@ test("replacement Manager wakes once for exact-assignment failure backlog only",
   );
   const managerAgent: any = {
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: managerSessionFile,
     },
@@ -6028,29 +6023,21 @@ test("replacement Manager wakes once for exact-assignment failure backlog only",
         display: true,
         timestamp: Date.now(),
       },
-      systemPrompt: "base",
-      systemPromptOptions: {
-        cwd: ctx.cwd,
-        selectedTools: [],
-        hiddenTools: [],
-        toolSnippets: {},
-        toolGuidelines: {},
-        promptGuidelines: [],
-        appendSystemPrompt: "",
-        sections: {},
-        contextFiles: [],
-        skills: [],
-      } satisfies NormalizedBuildSystemPromptOptions,
-    } satisfies BeforeAgentStartEvent;
-    await pi.events.get("before_agent_start")![0](customStartup, ctx);
+      systemPrompt: ["base"],
+    };
+    const startupResult = await pi.events.get("before_agent_start")![0](
+      customStartup,
+      ctx,
+    );
     assert.equal(deliveries(activeFailure.id).length, 0);
     assert.deepEqual(
       listProjectMessages(runtime, "repo-key", branch).map(({ id }) => id),
       [activeFailure.id],
       "busy custom startup preserves the authorized durable message",
     );
-    assert.ok(
-      customStartup.systemPromptOptions.sections.pi_herdsman_role,
+    assert.match(
+      startupResult.systemPrompt.join("\n"),
+      /You are the verified Manager/,
       "custom startup applies the Manager role projection",
     );
 
@@ -6157,7 +6144,7 @@ test("recovery cleanup keeps an idle restored herd open when failure reporting i
                 processInfoCount === 1
                   ? [
                       { pid: 123, argv0: "/bin/zsh" },
-                      { pid: 999, argv0: "/usr/local/bin/pi" },
+                      { pid: 999, argv0: "/usr/local/bin/omp" },
                     ]
                   : [{ pid: 123, argv0: "/bin/zsh" }],
             },
@@ -7022,8 +7009,8 @@ test("one failed child recovery does not clear valid sibling runtimes", async ()
         );
         if (bad)
           bad.agent_session = {
-            source: "herdr:pi",
-            agent: "pi",
+            source: "herdr:omp",
+            agent: "omp",
             kind: "id",
             value: "22222222-2222-4222-8222-222222222222",
           };
@@ -7478,8 +7465,8 @@ test("session assignment reports a pane mismatch from the agent state producer",
               workspace_id: WORKSPACE,
               cwd: "/tmp",
               agent_session: {
-                source: "herdr:pi",
-                agent: "pi",
+                source: "herdr:omp",
+                agent: "omp",
                 kind: "id",
                 value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
               },
@@ -7491,7 +7478,7 @@ test("session assignment reports a pane mismatch from the agent state producer",
               label,
               paneEnvironment.PI_HERDSMAN_RUN_ID ?? AGENT_ID,
             ),
-            herdr_kind: "pi",
+            herdr_kind: "omp",
             agent_definition: "agent",
             model: null,
             thinking: null,
@@ -7569,32 +7556,24 @@ test("fresh assignment transports automatic prompt snapshots and cleans them up"
     );
     assert.equal(result.details.ok, true, JSON.stringify(result.details));
     assert.equal(launched.length, 1);
-    assert.deepEqual(
-      launched[0].args.filter(
-        (arg, index, args) =>
-          (arg === "--system-prompt" || arg === "--append-system-prompt") &&
-          !args[index + 1]?.startsWith("<active_agent "),
-      ),
-      ["--append-system-prompt", "--append-system-prompt"],
-    );
-    assert.equal(launched[0].contents.length, 2);
-    assert.match(launched[0].contents[0]!, /definition body/);
-    assert.match(launched[0].contents[0]!, /automatic prompt snapshot/);
-    assert.match(launched[0].contents[1]!, /ask_owner/);
+    const launchPrompt = launched[0].contents.join("\n");
+    assert.match(launchPrompt, /definition body/);
+    assert.match(launchPrompt, /automatic prompt snapshot/);
+    assert.match(launchPrompt, /ask_owner/);
     assert.match(
-      launched[0].contents[1]!.replaceAll(/\s+/g, " ").trim(),
+      launchPrompt.replaceAll(/\s+/g, " ").trim(),
       /canonical result:<request-id> refs already supplied as file evidence exactly\s+when forwarding them/,
     );
     assert.match(
-      launched[0].contents[1]!,
+      launchPrompt,
       /pass reusable direct-agent result refs through `files`/,
     );
     assert.match(
-      launched[0].contents[1]!,
+      launchPrompt,
       /Do not overlap writers in a worktree or file-ownership boundary/,
     );
     assert.match(
-      launched[0].contents[1]!,
+      launchPrompt,
       /Preserve\s+canonical result:<request-id> refs already supplied as file evidence exactly\s+when forwarding them/,
     );
     assert.match(assignedText, /fresh task/);
@@ -7709,17 +7688,10 @@ test("caller assignment files suppress canonical-overlapping automatic prompts",
       fakeContext(),
     );
     assert.equal(result.details.ok, true, JSON.stringify(result.details));
-    assert.equal(launched[0].contents.length, 2);
-    assert.match(launched[0].contents[0]!, /definition body/);
-    assert.match(launched[0].contents[1]!, /ask_owner/);
-    assert.deepEqual(
-      launched[0].args.filter(
-        (arg, index, args) =>
-          (arg === "--system-prompt" || arg === "--append-system-prompt") &&
-          !args[index + 1]?.startsWith("<active_agent "),
-      ),
-      ["--append-system-prompt", "--append-system-prompt"],
-    );
+    const launchPrompt = launched[0].contents.join("\n");
+    assert.match(launchPrompt, /definition body/);
+    assert.match(launchPrompt, /ask_owner/);
+    assert.doesNotMatch(launchPrompt, /caller wins canonical overlap/);
     assert.match(assignedText, /caller wins canonical overlap/);
   } finally {
     pi.events.get("session_shutdown")?.[0]();
@@ -8252,7 +8224,6 @@ test("session continuation starts a new agent generation with current prompt con
       ownedSessionContext(session.id, name),
     );
     assert.equal(result.details.ok, true, JSON.stringify(result.details));
-    assert.equal(launched[0].contents.length, 2);
     assert.equal(bootstrapPrepares, 0);
     assert.equal(result.details.session_id, session.id);
     assert.equal(result.details.owner_session_id, LEAD_SESSION_ID);
@@ -8271,9 +8242,10 @@ test("session continuation starts a new agent generation with current prompt con
     const state = readAgentState(startup.mailbox)!;
     assert.equal(state.version, 5);
     assert.equal(state.piSessionId, session.id);
-    assert.match(launched[0].contents[0]!, /definition body/);
-    assert.match(launched[0].contents[0]!, /current saved-session prompt/);
-    assert.match(launched[0].contents[1]!, /ask_owner/);
+    const launchPrompt = launched[0].contents.join("\n");
+    assert.match(launchPrompt, /definition body/);
+    assert.match(launchPrompt, /current saved-session prompt/);
+    assert.match(launchPrompt, /ask_owner/);
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.ok(continuedRequest);
     assert.notEqual(continuedRequest!.requestId, savedRequestId);
@@ -8288,7 +8260,7 @@ test("session continuation starts a new agent generation with current prompt con
     assert.deepEqual(continuedRequest!.localEvidence, [localEvidence]);
     assert.match(continuedRequest!.text, /continued plan/);
     assert.match(continuedRequest!.text, /continued review/);
-    const sessionIndex = launched[0].args.indexOf("--session");
+    const sessionIndex = launched[0].args.indexOf("--resume");
     assert.equal(
       launched[0].args[sessionIndex + 1],
       realFs.realpathSync(session.path),
@@ -8651,8 +8623,8 @@ test("session continuation ignores an unrelated missing live session path", asyn
   const staleAgent = {
     ...agentFromState(staleState),
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "path",
       value: staleObservedPath,
     },
@@ -8743,8 +8715,8 @@ test("session continuation keeps an exact live ID busy despite a missing path ob
   const staleAgent = {
     ...agentFromState(staleState),
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: session.id,
     },
@@ -8833,8 +8805,8 @@ test("session continuation keeps an exact live ID busy despite contradictory liv
   const staleAgent = {
     ...agentFromState(staleState),
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: session.id,
     },
@@ -8932,8 +8904,8 @@ test("session continuation ignores removed secondary session fields", async () =
   const staleAgent = {
     ...agentFromState(staleState),
     agent_session: {
-      source: "herdr:pi",
-      agent: "pi",
+      source: "herdr:omp",
+      agent: "omp",
       kind: "id",
       value: session.id,
     },
@@ -9440,8 +9412,8 @@ test("rejects an invalid generated collision label after releasing its claim", a
                     workspace_id: WORKSPACE,
                     cwd: "/tmp",
                     agent_session: {
-                      source: "herdr:pi",
-                      agent: "pi",
+                      source: "herdr:omp",
+                      agent: "omp",
                       kind: "id",
                       value: DEFAULT_PI_SESSION_ID,
                     },
@@ -9752,7 +9724,7 @@ test("managed startup rejects a mismatched Agent before its first task and rolls
                   started && !stopped
                     ? [
                         { pid: 123, argv0: "/bin/zsh" },
-                        { pid: 999, argv0: "/usr/local/bin/pi" },
+                        { pid: 999, argv0: "/usr/local/bin/omp" },
                       ]
                     : [{ pid: 123, argv0: "/bin/zsh" }],
               },
@@ -10215,7 +10187,7 @@ test("assignment launch bounds missing official Pi session identity grace", asyn
                   started && !stopped
                     ? [
                         { pid: 123, argv0: "/bin/zsh" },
-                        { pid: 999, argv0: "/usr/local/bin/pi" },
+                        { pid: 999, argv0: "/usr/local/bin/omp" },
                       ]
                     : [{ pid: 123, argv0: "/bin/zsh" }],
               },
@@ -10246,7 +10218,7 @@ test("assignment launch bounds missing official Pi session identity grace", asyn
   assert.equal(result.details.error.category, "invalid_request");
   assert.match(
     result.details.error.message,
-    /official Pi integration did not report its session identity/,
+    /integration did not report its session identity/,
   );
   assert.equal(result.details.error.retryAttempted, true);
   assert.equal(pi.calls.filter((args) => isPreservePaneStop(args)).length, 1);
@@ -10298,7 +10270,7 @@ test("assignment integration grace aborts without a later lookup or timer", asyn
                   started && !stopped
                     ? [
                         { pid: 123, argv0: "/bin/zsh" },
-                        { pid: 999, argv0: "/usr/local/bin/pi" },
+                        { pid: 999, argv0: "/usr/local/bin/omp" },
                       ]
                     : [{ pid: 123, argv0: "/bin/zsh" }],
               },

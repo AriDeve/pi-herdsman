@@ -20,13 +20,13 @@ dist/agent-definitions/
 Global definitions live by default in:
 
 ```text
-~/.pi/agent/agents/
+~/.omp/agent/agents/
 ```
 
 Project definitions are optional and live in the current project:
 
 ```text
-<cwd>/.pi/agents/
+<cwd>/.omp/agents/
 ```
 
 Pi Herdsman discovers project definitions when Pi considers the project
@@ -39,7 +39,7 @@ bundled < project < global
 Global definitions remain final user policy. For example:
 
 ```text
-.pi/
+.omp/
 └── agents/
     └── reviewer.md
 ```
@@ -138,21 +138,9 @@ Focused source-edit agent for an explicitly approved implementation.
 
 ### `researcher`
 
-Focused current/external research agent. Read-only local policy. It also
-allows the default web tool names exposed by `pi-web-access`:
-`web_search`, `fetch_content`, `get_search_content`, and `source_check`.
-Web access is optional. Install it with:
-
-```text
-pi install npm:pi-web-access
-```
-
-Pi Herdsman does not depend on or install `pi-web-access`. Without those tools,
-the researcher retains local inspection capabilities and reports unavailable
-external evidence. Normal Pi extension discovery is intentionally enabled for
-this role so an installed compatible extension can provide the tools. If
-`pi-web-access` is configured with different public tool names, replace the
-researcher's `tools` array through a matching project or global overlay.
+Focused current/external research agent. Its callable tools are OMP's native
+`read`, `glob`, `grep`, and `web_search`. `read` supports directories and URLs.
+No separate web-access extension is required.
 Extension code itself is not sandboxed by the callable-tool allowlist.
 
 ### `reviewer`

@@ -3,7 +3,6 @@ import * as realFs from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { mock, test } from "node:test";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
 
 let deleteBeforeRead = false;
 let failConfigRename = false;
@@ -134,12 +133,12 @@ test("partial and complete valid configs overlay defaults", () => {
 test("trusted project preferences override only the two supported global values", () => {
   const cwd = realFs.mkdtempSync(join(tmpdir(), "pi-herdsman-project-config-"));
   try {
-    realFs.mkdirSync(`${cwd}/.pi`, { recursive: true });
+    realFs.mkdirSync(`${cwd}/.omp`, { recursive: true });
     updateConfig("autoActivateManager", true);
     updateConfig("contextRetirement", true);
     const ctx = { cwd, isProjectTrusted: () => true } as never;
     realFs.writeFileSync(
-      `${cwd}/.pi/settings.json`,
+      `${cwd}/.omp/settings.json`,
       '\uFEFF{"other":1,"piHerdsman":{"autoActivateManager":false}}',
     );
     assert.deepEqual(readProjectOverrides(ctx), { autoActivateManager: false });
@@ -151,7 +150,7 @@ test("trusted project preferences override only the two supported global values"
       true,
     );
     realFs.writeFileSync(
-      `${cwd}/.pi/settings.json`,
+      `${cwd}/.omp/settings.json`,
       '{"piHerdsman":{"contextRetirement":false,"autoActivateManager":false}}',
     );
     assert.equal(readEffectiveConfig(ctx).contextRetirement, false);
@@ -160,7 +159,7 @@ test("trusted project preferences override only the two supported global values"
       '{"piHerdsman":{"defaultLeadExecution":"flexible"}}',
       "{",
     ]) {
-      realFs.writeFileSync(`${cwd}/.pi/settings.json`, content);
+      realFs.writeFileSync(`${cwd}/.omp/settings.json`, content);
       assert.throws(
         () => readProjectOverrides(ctx),
         /settings|boolean|unsupported/,
@@ -173,7 +172,7 @@ test("trusted project preferences override only the two supported global values"
 
 test("project overrides update one trusted preference and preserve Pi settings", () => {
   const cwd = realFs.mkdtempSync(join(tmpdir(), "pi-herdsman-project-write-"));
-  const path = join(cwd, ".pi", "settings.json");
+  const path = join(cwd, ".omp", "settings.json");
   const ctx = { cwd, isProjectTrusted: () => true } as never;
   try {
     updateConfig("autoActivateManager", true);
@@ -224,30 +223,6 @@ test("project overrides update one trusted preference and preserve Pi settings",
   }
 });
 
-test("project overrides coexist with Pi SettingsManager project updates", async () => {
-  const cwd = realFs.mkdtempSync(join(tmpdir(), "pi-herdsman-pi-settings-"));
-  const path = join(cwd, ".pi", "settings.json");
-  const ctx = { cwd, isProjectTrusted: () => true } as never;
-  try {
-    const settings = SettingsManager.create(cwd, testAgentDir);
-
-    settings.setProjectExtensionPaths(["./example-extension"]);
-    await settings.flush();
-    updateProjectOverride(ctx, "autoActivateManager", false);
-
-    settings.setProjectPackages(["npm:example-package"]);
-    await settings.flush();
-
-    assert.deepEqual(JSON.parse(realFs.readFileSync(path, "utf8")), {
-      extensions: ["./example-extension"],
-      packages: ["npm:example-package"],
-      piHerdsman: { autoActivateManager: false },
-    });
-  } finally {
-    realFs.rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
 test("inheriting on a missing project file does not create it", () => {
   const cwd = realFs.mkdtempSync(join(tmpdir(), "pi-herdsman-project-empty-"));
   try {
@@ -256,7 +231,7 @@ test("inheriting on a missing project file does not create it", () => {
       "contextRetirement",
       undefined,
     );
-    assert.equal(realFs.existsSync(join(cwd, ".pi")), false);
+    assert.equal(realFs.existsSync(join(cwd, ".omp")), false);
   } finally {
     realFs.rmSync(cwd, { recursive: true, force: true });
   }
@@ -266,7 +241,7 @@ test("project writes enforce trust and reject invalid data without changing byte
   const cwd = realFs.mkdtempSync(
     join(tmpdir(), "pi-herdsman-project-invalid-"),
   );
-  const path = join(cwd, ".pi", "settings.json");
+  const path = join(cwd, ".omp", "settings.json");
   realFs.mkdirSync(dirname(path), { recursive: true });
   const ctx = { cwd, isProjectTrusted: () => true } as never;
   try {
@@ -307,7 +282,7 @@ test("project writes enforce trust and reject invalid data without changing byte
 
 test("project writes reject symlink targets and fail safely on lock contention", () => {
   const cwd = realFs.mkdtempSync(join(tmpdir(), "pi-herdsman-project-safe-"));
-  const path = join(cwd, ".pi", "settings.json");
+  const path = join(cwd, ".omp", "settings.json");
   realFs.mkdirSync(dirname(path), { recursive: true });
   const ctx = { cwd, isProjectTrusted: () => true } as never;
   try {
