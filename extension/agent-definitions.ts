@@ -1277,9 +1277,7 @@ export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
     };
     return cachedPolicy;
   };
-  pi.on("session_start", async () => {
-    const value = policy();
-    if (!value) return;
+  const applyPolicy = async (value: OmpLaunchPolicy) => {
     const selected = ompLaunchTools(value, pi.getAllTools());
     const active = new Set([...pi.getActiveTools(), ...value.requiredTools]);
     await pi.setActiveTools(
@@ -1287,6 +1285,30 @@ export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
         ? selected.filter((name) => active.has(name))
         : selected,
     );
+  };
+  pi.on("session_start", async () => {
+    const value = policy();
+    if (value) await applyPolicy(value);
+  });
+  pi.on("before_agent_start", async (event) => {
+    const value = policy();
+    if (!value) return;
+    // Native deferred MCP discovery can activate tools after session_start.
+    await applyPolicy(value);
+    const allowed = ompLaunchTools(value, pi.getAllTools());
+    const active = pi.getActiveTools().filter((name) => allowed.includes(name));
+    const routing = active.includes("bash")
+      ? "Use permitted read/search tools for inspection; bounded bash is available only for work authorized by the assignment."
+      : "The bash tool is unavailable; use permitted read/search tools for inspection.";
+    // Native OMP carries prompt blocks; the legacy Pi type still declares a string.
+    const nativeEvent = event as unknown as { systemPrompt: string[] };
+    const systemPrompt = nativeEvent.systemPrompt;
+    return {
+      systemPrompt: [
+        ...systemPrompt,
+        `Effective Agent tool policy permits: ${JSON.stringify(allowed)}.\nActive top-level tools: ${JSON.stringify(active)}.\n${routing}\nTool-routing guidance applies only to permitted capabilities. Indirect MCP/device routes remain subject to the same Agent tool policy; a wrapper does not authorize its target.`,
+      ],
+    };
   });
   pi.on("tool_call", (event) => {
     const value = policy();

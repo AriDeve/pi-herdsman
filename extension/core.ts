@@ -259,6 +259,7 @@ export type MessagePreparationOptions = {
   serializedBytes?: (
     text: string,
     resultBindings: readonly ResultBinding[],
+    evidenceRefs: readonly string[],
   ) => number;
   verifiedEvidence?: readonly Pick<RequiredEvidence, "path" | "sha256">[];
 };
@@ -299,14 +300,14 @@ export function prepareMessageInput(
       options.fits ??
       ((value: string, bindings: readonly ResultBinding[]) =>
         (options.serializedBytes
-          ? options.serializedBytes(value, bindings)
+          ? options.serializedBytes(value, bindings, [])
           : Buffer.byteLength(value, "utf8")) <=
         (options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES));
     if (!fits(text, []))
       fail(
         "invalid_request",
         options.serializedBytes
-          ? `Mailbox payload is ${options.serializedBytes(text, [])} bytes; configured limit is ${options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES} bytes`
+          ? `Mailbox payload is ${options.serializedBytes(text, [], [])} bytes; configured limit is ${options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES} bytes`
           : "Request exceeds the mailbox size limit",
         operation,
       );
@@ -316,20 +317,26 @@ export function prepareMessageInput(
   const resultBindings = regular.flatMap((file) =>
     file.binding ? [file.binding] : [],
   );
+  const canonicalPaths = regular.map((file) => file.canonicalPath);
+  const evidenceRefs = options.serializedBytes
+    ? regular.map((file) =>
+        file.input.startsWith("result:") ? file.input : file.canonicalPath,
+      )
+    : [];
   const sections = regular.map((file) => renderMessageFile(file));
   const rendered = () => [...sections, `${heading}:\n${text}`].join("\n\n");
   const fits =
     options.fits ??
     ((value: string, bindings: readonly ResultBinding[]) =>
       (options.serializedBytes
-        ? options.serializedBytes(value, bindings)
+        ? options.serializedBytes(value, bindings, evidenceRefs)
         : Buffer.byteLength(value, "utf8")) <=
       (options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES));
   if (!fits(rendered(), resultBindings))
     fail(
       "invalid_request",
       options.serializedBytes
-        ? `Mailbox payload is ${options.serializedBytes(rendered(), resultBindings)} bytes; configured limit is ${options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES} bytes`
+        ? `Mailbox payload is ${options.serializedBytes(rendered(), resultBindings, evidenceRefs)} bytes; configured limit is ${options.mailboxLimitBytes ?? MAILBOX_PROTOCOL_LIMIT_BYTES} bytes`
         : "Request exceeds the mailbox size limit",
       operation,
     );
@@ -441,7 +448,7 @@ export function prepareMessageInput(
   }
   return {
     text: rendered(),
-    canonicalPaths: regular.map((file) => file.canonicalPath),
+    canonicalPaths,
     resultBindings,
   };
 }

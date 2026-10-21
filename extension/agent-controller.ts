@@ -20,6 +20,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { fail, markRetryAttempted, OperationError } from "./errors.ts";
+import type { ErrorCategory } from "./errors.ts";
 import {
   inspectSessionFile,
   type ForeignSessionSnapshot,
@@ -536,21 +537,26 @@ when forwarding them.
 Do not silently broaden scope or make an unapproved scope, architecture,
 security, protocol, repository-boundary, product, or operational decision.
 
-Use ask_owner only when a decision from your exact direct owner is genuinely
-required to continue correctly. ask_owner may include files for supporting
-evidence; complete strict UTF-8 text may be embedded and other files remain
-canonical local references. ask_owner must be the only tool call and final
-tool call of that turn. Keep at most one question outstanding. Stop while
-blocked, wait for the exact owner reply, do not guess the answer, and do not
-complete the assignment while blocked. The reply resumes the same assignment.
+For this managed child, required owner decisions use ask_owner, not generic
+agent:// messaging or another transport. Use ask_owner only when a decision
+from your exact direct owner is genuinely required to continue correctly,
+subject to its eligibility rules for unresolved direct-agent work. ask_owner
+may include files for supporting evidence; complete strict UTF-8 text may be
+embedded and other files remain canonical local references. ask_owner must be
+the only tool call and final tool call of that turn. Keep at most one question
+outstanding. Stop while blocked, wait for the exact owner reply, do not guess
+the answer, and do not complete the assignment while blocked. The reply
+resumes the same assignment.
 
 Treat inactivity as advisory, not proof of a hang. Preserve exact identity and
 cleanup evidence on failure. Do not blindly retry destructive cleanup or
 silently take over delegated work.
 
-Return a concise actionable handoff covering what you inspected or changed,
-validation performed, material findings or decisions, unresolved risks or
-blockers, remaining work, and reusable paths or artifacts.`;
+Routine completion uses your final response, which Herdsman delivers as the
+assignment result; it does not require a separate owner message. Return a
+concise actionable handoff covering what you inspected or changed, validation
+performed, material findings or decisions, unresolved risks or blockers,
+remaining work, and reusable paths or artifacts.`;
 const INTEGRATION_SESSION_RETRY_MS = 250;
 const INTEGRATION_SESSION_RETRIES = 8;
 const HEALTH_STALE_AFTER_MS = 10 * 60_000;
@@ -1375,6 +1381,90 @@ export function hasDeliveredAsk(
       details?.piSessionId === ask.piSessionId
     );
   });
+}
+
+type AskDeliveryIdentity = Pick<
+  AskRecord,
+  | "askId"
+  | "requestId"
+  | "runId"
+  | "ownerSessionId"
+  | "workspaceId"
+  | "agentLabel"
+  | "paneId"
+  | "piSessionId"
+>;
+
+/** Content-free session evidence; diagnostic persistence cannot change delivery. */
+export function recordAskDelivery(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  ask: AskDeliveryIdentity,
+  stage:
+    | "created"
+    | "waiting_for_owner_idle"
+    | "queued_for_owner_input"
+    | "included_in_owner_input"
+    | "delivery_failed"
+    | "reply_acknowledged"
+    | "reply_accepted",
+  metadata: {
+    replyRequestId?: string;
+    errorCategory?: ErrorCategory | "delivery_error";
+    retryDelayMs?: number;
+  } = {},
+): void {
+  const identity = {
+    askId: ask.askId,
+    requestId: ask.requestId,
+    runId: ask.runId,
+    ownerSessionId: ask.ownerSessionId,
+    workspaceId: ask.workspaceId,
+    agentLabel: ask.agentLabel,
+    paneId: ask.paneId,
+    piSessionId: ask.piSessionId,
+  };
+  try {
+    if (
+      ctx.sessionManager.getEntries().some((entry) => {
+        if (
+          entry.type !== "custom" ||
+          entry.customType !== "pi-herdsman-ask-delivery"
+        )
+          return false;
+        if (
+          !entry.data ||
+          typeof entry.data !== "object" ||
+          Array.isArray(entry.data)
+        )
+          return false;
+        const data = entry.data as Record<string, unknown>;
+        return (
+          data.stage === stage &&
+          data.replyRequestId === metadata.replyRequestId &&
+          Object.entries(identity).every(([key, value]) => data[key] === value)
+        );
+      })
+    )
+      return;
+    pi.appendEntry("pi-herdsman-ask-delivery", {
+      ...identity,
+      stage,
+      observedBySessionId: ctx.sessionManager.getSessionId(),
+      observedAt: Date.now(),
+      ...(metadata.replyRequestId
+        ? { replyRequestId: metadata.replyRequestId }
+        : {}),
+      ...(metadata.errorCategory
+        ? { errorCategory: metadata.errorCategory }
+        : {}),
+      ...(metadata.retryDelayMs !== undefined
+        ? { retryDelayMs: metadata.retryDelayMs }
+        : {}),
+    });
+  } catch {
+    // Delivery and acknowledgement remain authoritative if diagnostics fail.
+  }
 }
 
 export function canonicalSessionPath(path: string): string {
@@ -2749,6 +2839,46 @@ export async function managedAgentSnapshots(
   };
 }
 
+function pendingOwnerQuestion(
+  state: ManagedAgentState,
+  ownerSessionId: string,
+) {
+  if (state.ownerSessionId !== ownerSessionId) return undefined;
+  try {
+    const ask = readPendingAsk(
+      agentMailboxPath(state.workspaceId, state.agentLabel),
+      state,
+    );
+    if (!ask) return undefined;
+    const summary = ask.questionSummary ?? {
+      question: ask.question.slice(0, 2000),
+      questionTruncated: ask.question.length > 2000,
+      evidenceRefs: (ask.resultBindings ?? [])
+        .filter(({ ref }) => ref.length <= 512)
+        .slice(0, 16)
+        .map(({ ref }) => ref),
+      evidenceTruncated:
+        (ask.resultBindings?.length ?? 0) > 16 ||
+        (ask.resultBindings ?? []).some(({ ref }) => ref.length > 512),
+    };
+    return {
+      ask_id: ask.askId,
+      assignment_request_id: ask.requestId,
+      run_id: ask.runId,
+      created_at: ask.createdAt,
+      question: summary.question,
+      question_truncated: summary.questionTruncated,
+      evidence_refs: summary.evidenceRefs,
+      evidence_truncated: summary.evidenceTruncated,
+      next_action:
+        "Waiting for an owner answer; use reply_agent with this agent identity.",
+    };
+  } catch {
+    // Missing, malformed, or mismatched asks do not establish reply authority.
+    return undefined;
+  }
+}
+
 export function listedAgentRecord(
   view: ManagedAgentSnapshotView,
   snapshot: VisibleManagedAgentSnapshot,
@@ -2773,7 +2903,7 @@ export function listedAgentRecord(
   const { listed, state, presence, parentLabel } = snapshot;
   const direct = state.ownerSessionId === ownerSessionId;
   const transcriptAvailable = dependencies.persistedTranscriptReady(state);
-  const mailbox = agentMailboxPath(state.workspaceId, state.agentLabel);
+  const pendingQuestion = pendingOwnerQuestion(state, ownerSessionId);
   let closeAvailable = false;
   if (direct && (presence.kind === "live" || presence.kind === "lost")) {
     try {
@@ -2801,22 +2931,7 @@ export function listedAgentRecord(
     if (listed.steerable === true) actions.push("steer");
     if (listed.state === "working" && !state.pendingAskId)
       actions.push("interrupt");
-    if (state.pendingAskId) {
-      try {
-        const ask = readPendingAsk(mailbox, state);
-        if (
-          ask?.askId === state.pendingAskId &&
-          ask.requestId === state.activeRequestId &&
-          ask.runId === state.runId &&
-          ask.ownerSessionId === state.ownerSessionId &&
-          ask.workspaceId === state.workspaceId &&
-          ask.agentLabel === state.agentLabel &&
-          ask.paneId === state.paneId &&
-          ask.piSessionId === state.piSessionId
-        )
-          actions.push("reply");
-      } catch {}
-    }
+    if (pendingQuestion) actions.push("reply");
     if (closeAvailable) actions.push("close");
   }
   const {
@@ -2835,6 +2950,19 @@ export function listedAgentRecord(
     ...publicAgent,
     agent: listed.label,
     available_tools: actions.map(agentToolName),
+    ...(pendingQuestion
+      ? {
+          pending_question: {
+            ...pendingQuestion,
+            ...(!actions.includes("reply")
+              ? {
+                  next_action:
+                    "Owner question remains pending, but reply_agent is unavailable. Use available_tools for permitted recovery.",
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(cleanupError ? { cleanup_error: cleanupError } : {}),
     ...(parentLabel ? { parent_label: parentLabel } : {}),
   };
@@ -4021,6 +4149,26 @@ export function createAgentController(
       };
     }
     const operation = params.action;
+    if (
+      (operation === "steer" || operation === "interrupt") &&
+      controlState === "blocked"
+    ) {
+      const current = readAgentState(runtime.mailboxPath);
+      const pendingQuestion =
+        current &&
+        sameIdentity(
+          current,
+          recordDependencies.runtimeIdentityState(runtime),
+        ) &&
+        current.activeRequestId === runtime.activeRequestId
+          ? pendingOwnerQuestion(current, context.sessionManager.getSessionId())
+          : undefined;
+      if (pendingQuestion)
+        fail("agent_busy", "Agent is waiting for an owner answer", operation, {
+          details: { pending_question: pendingQuestion },
+          nextAction: pendingQuestion.next_action,
+        });
+    }
     if (operation === "steer" && agent.steerable !== true)
       fail(
         "agent_busy",
@@ -4049,6 +4197,7 @@ export function createAgentController(
     )
       fail("agent_busy", "Agent has no active assignment", operation);
     let askId: string | undefined;
+    let replyAsk: AskRecord | undefined;
     let createdAt = Date.now();
     let requestId = randomUUID();
     if (operation === "reply") {
@@ -4102,6 +4251,7 @@ export function createAgentController(
           "Agent identity changed before reply",
           "reply",
         );
+      replyAsk = ask;
     }
     const kind = operation;
     const limits = readConfig();
@@ -4150,6 +4300,10 @@ export function createAgentController(
       operation,
       input.resultBindings,
     );
+    if (replyAsk)
+      recordAskDelivery(pi, context, replyAsk, "reply_acknowledged", {
+        replyRequestId: sentRequestId,
+      });
     return {
       ok: true,
       action: operation,
@@ -5275,6 +5429,13 @@ export function createAgentController(
     markRetryAttempted(error);
     const key = `${runtime.mailboxPath}:${ask.askId}`;
     if (askDeliveryRetries.has(key)) return;
+    recordAskDelivery(pi, context, ask, "delivery_failed", {
+      errorCategory:
+        error instanceof OperationError
+          ? error.detail.category
+          : "delivery_error",
+      retryDelayMs: 250,
+    });
     runtime.cleanupError = `Ask delivery failed; retrying: ${String(error)}`;
     askDeliveryRetries.set(
       key,
@@ -5329,7 +5490,6 @@ export function createAgentController(
     askDeliveryInFlight.add(key);
     try {
       if (
-        !context.isIdle() ||
         runtimes.get(runtime.label) !== runtime ||
         context.sessionManager.getSessionId() !== runtime.ownerSessionId ||
         state.runId !== runtime.runId ||
@@ -5355,8 +5515,13 @@ export function createAgentController(
         ask,
       );
       if (!delivered) {
+        if (!context.isIdle()) {
+          recordAskDelivery(pi, context, ask, "waiting_for_owner_idle");
+          return;
+        }
         importResultBindings(pi, context, ask.resultBindings, "ask_owner");
         options.sendAskMessage(context, ask);
+        recordAskDelivery(pi, context, ask, "queued_for_owner_input");
       }
       cancelAskRetry(runtime, ask.askId);
       clearCleanupError(runtime, "Ask delivery failed");
@@ -5371,6 +5536,33 @@ export function createAgentController(
       askDeliveryInFlight.delete(key);
     }
   };
+  pi.on("context", (event, context) => {
+    if (!active || sessionAbortController?.signal.aborted) return;
+    for (const runtime of runtimes.values()) {
+      try {
+        if (context.sessionManager.getSessionId() !== runtime.ownerSessionId)
+          continue;
+        const state = readAgentState(runtime.mailboxPath);
+        if (
+          !state?.pendingAskId ||
+          state.runId !== runtime.runId ||
+          state.ownerSessionId !== runtime.ownerSessionId ||
+          state.workspaceId !== runtime.workspaceId ||
+          state.agentLabel !== runtime.label ||
+          state.paneId !== runtime.paneId ||
+          !sameCwd(state.cwd, runtime.cwd) ||
+          state.piSessionId !== runtime.piSessionId ||
+          !sameSessionPath(state.piSessionFile, runtime.piSessionFile)
+        )
+          continue;
+        const ask = readPendingAsk(runtime.mailboxPath, state);
+        if (ask && hasDeliveredAsk(event.messages, ask))
+          recordAskDelivery(pi, context, ask, "included_in_owner_input");
+      } catch {
+        // The mailbox watcher owns malformed/stale ask recovery.
+      }
+    }
+  });
   const resultCleanupReady = (
     runtime: Runtime,
     requestId: string,

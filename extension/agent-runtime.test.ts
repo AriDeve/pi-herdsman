@@ -118,6 +118,24 @@ function emitAgentTurn(
   );
 }
 
+function askDiagnostics(
+  entries: readonly unknown[],
+): Record<string, unknown>[] {
+  return entries.flatMap((entry) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !("customType" in entry) ||
+      entry.customType !== "pi-herdsman-ask-delivery" ||
+      !("data" in entry) ||
+      !entry.data ||
+      typeof entry.data !== "object"
+    )
+      return [];
+    return [entry.data as Record<string, unknown>];
+  });
+}
+
 test("Lead visibility follows only uniquely proven workspace-scoped ancestry", () => {
   const state = (
     label: string,
@@ -1758,6 +1776,21 @@ test("agent ask_owner blocks settlement and reply resumes the same assignment", 
     readPendingAsk(mailbox, waiting!)?.question ?? "",
     /registered-ask-options\.md/,
   );
+  assert.deepEqual(readPendingAsk(mailbox, waiting!)?.questionSummary, {
+    question: "Should the token be ALPHA or BETA?",
+    questionTruncated: false,
+    evidenceRefs: [realFs.realpathSync(askFile)],
+    evidenceTruncated: false,
+  });
+  const createdDiagnostic = askDiagnostics(agent.entries).find(
+    (entry) => entry.stage === "created",
+  );
+  assert.equal(createdDiagnostic?.askId, waiting?.pendingAskId);
+  assert.equal(createdDiagnostic?.requestId, assignment.requestId);
+  assert.doesNotMatch(
+    JSON.stringify(createdDiagnostic),
+    /ALPHA|owner options|registered-ask-options/,
+  );
   await agent.events.get("agent_settled")![0]({ aborted: false }, context);
   assert.equal(readResult(mailbox, assignment.requestId), undefined);
 
@@ -1774,6 +1807,44 @@ test("agent ask_owner blocks settlement and reply resumes the same assignment", 
     text: "Use ALPHA.",
     createdAt: Date.now(),
   };
+  for (const mismatch of ["ask", "owner", "assignment"] as const) {
+    const rejected = {
+      ...reply,
+      requestId: randomUUID(),
+      ...(mismatch === "ask" ? { askId: randomUUID() } : {}),
+      ...(mismatch === "owner" ? { ownerSessionId: randomUUID() } : {}),
+    };
+    const pending = readPendingAsk(mailbox, readAgentState(mailbox)!)!;
+    if (mismatch === "assignment")
+      writeAsk(mailbox, { ...pending, requestId: randomUUID() });
+    writeRequest(mailbox, rejected);
+    assert.deepEqual(
+      agent.events.get("input")![0](
+        { text: controlMarker(rejected.requestId) },
+        context,
+      ),
+      { action: "handled" },
+    );
+    assert.equal(readAgentState(mailbox)?.lastAck?.accepted, false, mismatch);
+    assert.equal(readAgentState(mailbox)?.lastAck?.code, "identity", mismatch);
+    assert.equal(
+      readAgentState(mailbox)?.pendingAskId,
+      waiting!.pendingAskId,
+      mismatch,
+    );
+    assert.equal(
+      readAgentState(mailbox)?.activeRequestId,
+      assignment.requestId,
+      mismatch,
+    );
+    assert.equal(
+      askDiagnostics(agent.entries).some(
+        (entry) => entry.stage === "reply_accepted",
+      ),
+      false,
+    );
+    if (mismatch === "assignment") writeAsk(mailbox, pending);
+  }
   pumpReply = true;
   writeRequest(mailbox, reply);
   emitMailboxChange(mailbox, `request-${reply.requestId}.json`);
@@ -1791,6 +1862,12 @@ test("agent ask_owner blocks settlement and reply resumes the same assignment", 
   const resumed = readAgentState(mailbox);
   assert.equal(resumed?.activeRequestId, assignment.requestId);
   assert.equal(resumed?.pendingAskId, undefined);
+  const acceptedDiagnostic = askDiagnostics(agent.entries).find(
+    (entry) => entry.stage === "reply_accepted",
+  );
+  assert.equal(acceptedDiagnostic?.askId, waiting!.pendingAskId);
+  assert.equal(acceptedDiagnostic?.requestId, assignment.requestId);
+  assert.equal(acceptedDiagnostic?.replyRequestId, reply.requestId);
   agent.events.get("message_end")![0](
     { message: { role: "assistant", content: "ALPHA" } },
     context,
@@ -1799,6 +1876,183 @@ test("agent ask_owner blocks settlement and reply resumes the same assignment", 
   await agent.events.get("agent_settled")![0]({ aborted: false }, context);
   assert.equal(readResult(mailbox, assignment.requestId)?.text, "ALPHA");
   realFs.rmSync(askFile, { force: true });
+});
+
+test("ask summary bounds original question and semantic evidence without coupling diagnostics to durability", async () => {
+  for (const failDiagnostics of [false, true]) {
+    const mailbox = setAgentEnvironment();
+    const resultId = randomUUID();
+    const canonicalRef = resultRef(resultId);
+    const semanticRef = "result:researcher#1";
+    const artifact = resultPath(resultId);
+    realFs.mkdirSync(resolve(artifact, ".."), { recursive: true });
+    realFs.writeFileSync(artifact, "private attachment body");
+    const explicitResultId = randomUUID();
+    const explicitResultRef = resultRef(explicitResultId);
+    const explicitArtifact = resultPath(explicitResultId);
+    realFs.writeFileSync(explicitArtifact, "other private attachment body");
+    const files = Array.from({ length: 18 }, (_, index) =>
+      join(testTmpRoot, `ask-summary-${index}.txt`),
+    );
+    for (const file of files)
+      realFs.writeFileSync(file, "private attachment body");
+    const longRoot = join(testTmpRoot, `ask-long-ref-${randomUUID()}`);
+    const longDirectory = join(
+      longRoot,
+      "a".repeat(180),
+      "b".repeat(180),
+      "c".repeat(180),
+    );
+    realFs.mkdirSync(longDirectory, { recursive: true });
+    const longFile = join(longDirectory, "evidence.txt");
+    realFs.writeFileSync(longFile, "private attachment body");
+    const entries: unknown[] = [
+      {
+        type: "custom",
+        customType: "pi-herdsman-result-ref",
+        data: { ref: semanticRef, canonicalRef },
+      },
+    ];
+    const branch: unknown[] = [
+      ...entries,
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "ask_owner" }],
+        },
+      },
+    ];
+    const agent = fakePi({ entries });
+    const appendEntry = agent.pi.appendEntry.bind(agent.pi);
+    agent.pi.appendEntry = (customType, data) => {
+      if (failDiagnostics && customType === "pi-herdsman-ask-delivery")
+        throw new Error("diagnostic storage unavailable");
+      appendEntry(customType, data);
+    };
+    const context = fakeAgentContext(entries, branch);
+    registerExtension!(agent.pi as never);
+    try {
+      await agent.events.get("session_start")![0](undefined, context);
+      const state = readAgentState(mailbox)!;
+      const assignment: RequestRecord = {
+        version: 5,
+        runId: state.runId,
+        requestId: randomUUID(),
+        ownerSessionId: state.ownerSessionId,
+        workspaceId: state.workspaceId,
+        agentLabel: state.agentLabel,
+        paneId: state.paneId,
+        kind: "task",
+        text: "choose",
+        createdAt: Date.now(),
+      };
+      writeRequest(mailbox, assignment);
+      agent.events.get("input")![0](
+        { text: controlMarker(assignment.requestId) },
+        context,
+      );
+      removeRequest(mailbox, assignment.requestId);
+      const question = "original question ".repeat(150);
+      const askTool = agent.tools.find((tool) => tool.name === "ask_owner")!;
+      if (!failDiagnostics) {
+        updateConfig("mailboxPayloadLimitBytes", 2048);
+        try {
+          await assert.rejects(
+            askTool.execute(
+              "summary-counts-toward-limit",
+              {
+                question: "Q".repeat(1200),
+              },
+              undefined,
+              undefined,
+              context,
+            ),
+            /Mailbox payload.*configured limit/,
+          );
+          assert.equal(readAgentState(mailbox)?.pendingAskId, undefined);
+          assert.equal(
+            readAgentState(mailbox)?.activeRequestId,
+            assignment.requestId,
+          );
+        } finally {
+          updateConfig("mailboxPayloadLimitBytes", undefined);
+        }
+      }
+      const response = await askTool.execute(
+        "bounded-ask",
+        {
+          question,
+          files: [
+            files[0]!,
+            semanticRef,
+            explicitResultRef,
+            longFile,
+            ...files.slice(1),
+          ],
+        },
+        undefined,
+        undefined,
+        context,
+      );
+      const waiting = readAgentState(mailbox)!;
+      const ask = readPendingAsk(mailbox, waiting)!;
+      assert.equal(response.details.askId, waiting.pendingAskId);
+      assert.equal(ask.questionSummary?.question, question.slice(0, 2000));
+      assert.equal(ask.questionSummary?.questionTruncated, true);
+      assert.equal(ask.questionSummary?.evidenceRefs.length, 16);
+      assert.equal(ask.questionSummary?.evidenceTruncated, true);
+      assert.deepEqual(ask.questionSummary?.evidenceRefs, [
+        files[0],
+        semanticRef,
+        explicitResultRef,
+        ...files.slice(1, 14),
+      ]);
+      assert.equal(
+        ask.questionSummary?.evidenceRefs.includes(canonicalRef),
+        false,
+      );
+      assert.equal(ask.questionSummary?.evidenceRefs.includes(artifact), false);
+      assert.equal(ask.questionSummary?.evidenceRefs.includes(longFile), false);
+      assert.ok(
+        ask.questionSummary?.evidenceRefs.every((ref) => ref.length <= 512),
+      );
+      assert.doesNotMatch(
+        JSON.stringify(askDiagnostics(entries)),
+        /private attachment body|original question/,
+      );
+      const reply: RequestRecord = {
+        ...assignment,
+        requestId: randomUUID(),
+        kind: "reply",
+        askId: ask.askId,
+        text: "continue",
+      };
+      writeRequest(mailbox, reply);
+      assert.deepEqual(
+        agent.events.get("input")![0](
+          { text: controlMarker(reply.requestId) },
+          context,
+        ),
+        {
+          action: "transform",
+          text: "Owner reply:\n\ncontinue\n\nContinue the original assignment using this answer.",
+        },
+      );
+      assert.equal(readAgentState(mailbox)?.pendingAskId, undefined);
+      assert.equal(readAgentState(mailbox)?.lastAck?.accepted, true);
+      assert.equal(
+        readAgentState(mailbox)?.activeRequestId,
+        assignment.requestId,
+      );
+    } finally {
+      agent.events.get("session_shutdown")?.[0]();
+      resetAgentMailbox(mailbox);
+      for (const file of [...files, artifact, explicitArtifact])
+        realFs.rmSync(file, { force: true });
+      realFs.rmSync(longRoot, { recursive: true, force: true });
+    }
+  }
 });
 
 test("message limits do not consult project trust", async () => {
@@ -5521,12 +5775,24 @@ test("owner ask waits while busy and delivers once after settlement", async () =
     ),
   });
   registerExtension!(pi.pi as never);
-  const context = fakeContext();
+  const context = fakeContext(pi.entries);
   let idle = false;
   (context as any).isIdle = () => idle;
   try {
     await pi.events.get("session_start")![0](undefined, context);
     assert.equal(pi.sent.length, 0);
+    assert.deepEqual(
+      askDiagnostics(pi.entries).map((entry) => entry.stage),
+      ["waiting_for_owner_idle"],
+    );
+    for (const handler of pi.events.get("context") ?? [])
+      await handler({ messages: [] }, context);
+    assert.equal(
+      askDiagnostics(pi.entries).some(
+        (entry) => entry.stage === "included_in_owner_input",
+      ),
+      false,
+    );
     idle = true;
     for (const handler of pi.events.get("agent_settled") ?? [])
       await handler({ aborted: false }, context);
@@ -5534,11 +5800,60 @@ test("owner ask waits while busy and delivers once after settlement", async () =
       (message: any) => message.customType === "pi-herdsman-agent-ask",
     ) as any;
     assert.ok(delivered);
-    assert.match(
-      delivered.content,
-      new RegExp(`Use reply_agent with agent="${label}"`),
+    assert.equal(delivered.details.askId, waiting.pendingAskId);
+    assert.deepEqual(
+      askDiagnostics(pi.entries).map((entry) => entry.stage),
+      ["waiting_for_owner_idle", "queued_for_owner_input"],
     );
-    assert.doesNotMatch(delivered.content, /agent action/i);
+    pi.entries.push({ type: "message", message: delivered });
+    for (const handler of pi.events.get("agent_settled") ?? [])
+      await handler({ aborted: false }, context);
+    for (const messages of [
+      [
+        {
+          ...delivered,
+          details: { ...delivered.details, askId: randomUUID() },
+        },
+      ],
+      [
+        {
+          ...delivered,
+          details: { ...delivered.details, requestId: randomUUID() },
+        },
+      ],
+      [
+        {
+          ...delivered,
+          details: { ...delivered.details, runId: randomUUID() },
+        },
+      ],
+    ]) {
+      for (const handler of pi.events.get("context") ?? [])
+        await handler({ messages }, context);
+    }
+    assert.equal(
+      askDiagnostics(pi.entries).some(
+        (entry) => entry.stage === "included_in_owner_input",
+      ),
+      false,
+    );
+    for (let attempt = 0; attempt < 2; attempt++)
+      for (const handler of pi.events.get("context") ?? [])
+        await handler(
+          { messages: [{ role: "custom", ...delivered }] },
+          context,
+        );
+    const included = askDiagnostics(pi.entries).filter(
+      (entry) => entry.stage === "included_in_owner_input",
+    );
+    assert.equal(included.length, 1);
+    assert.equal(included[0]?.askId, waiting.pendingAskId);
+    assert.equal(included[0]?.ownerSessionId, waiting.ownerSessionId);
+    assert.equal(included[0]?.requestId, requestId);
+    assert.doesNotMatch(
+      JSON.stringify(askDiagnostics(pi.entries)),
+      /Choose ALPHA or BETA/,
+    );
     assert.equal(
       pi.sent.filter(
         (message: any) => message.customType === "pi-herdsman-agent-ask",

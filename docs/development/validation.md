@@ -10,11 +10,16 @@ capability policies, status/title presentation, project settings, and read-only
 native session inspection. The session inspection check runs through OMP's
 real import adapter under Bun, including physical title slots and blob references.
 The command also builds the installed bundle and runs
-`scripts/omp-tool-execution-check.ts` against the real OMP CLI. A local scripted
-provider drives `generalist` through `bash` running `pwd` and `scout` through
-`read` of a temporary file. Both cases verify the configured active tool set;
-an explicit empty-tool policy verifies that unrelated defaults stay disabled.
-These checks use temporary state and do not call an external model API.
+`scripts/omp-tool-execution-check.ts` against the real OMP CLI. A loopback
+HTTP/SSE provider exercises OMP's native OpenAI-compatible request serializer
+and response parser, checking provider-visible schemas and capability guidance
+alongside actual tool execution. Cases cover `generalist` Bash, `scout` reads
+and denied Bash, an empty-tool policy, and permitted/denied indirect MCP device
+calls over real stdio transport. The MCP server records calls so denied
+targets must remain unexecuted. Deferred MCP discovery must not reintroduce
+forbidden provider schemas after startup policy selection. These checks use
+temporary state, not an external model API; they do not establish real-model
+instruction adherence or external Codex Lite conversion behavior.
 `npm run package:audit` checks the bundled native entry point and packaged skills.
 The upstream Pi smoke scripts remain Pi-targeted; OMP delegation requires a
 separate named Herdr session with OMP's integration loaded.

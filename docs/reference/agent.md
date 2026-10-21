@@ -186,6 +186,7 @@ Each actionable live agent record includes:
 | `active_request_id`, `last_activity_at`, `stale`, `inactive_ms` | Assignment and advisory activity evidence.                                                                                                                                                                       |
 | `parent_label`                                                  | Durable parent assignment when the parent is visible.                                                                                                                                                            |
 | `cleanup_error`, `result_error`, `diagnostic`, `tokens`         | Bounded recovery and presentation evidence when present.                                                                                                                                                         |
+| `pending_question`                                              | Bounded pending ask summary, visible only to the exact direct owner after ask/state correlation succeeds.                                                                                                        |
 
 `available_tools` is authoritative model guidance for the current snapshot.
 Do not infer eligibility from `state`.
@@ -208,6 +209,15 @@ preflight currently succeeds. Unknown records and non-direct descendants expose
 no mutation actions. Every operation rechecks identity, ownership, mailbox
 state, and lifecycle immediately before mutation.
 The public record does not expose `steerable`.
+
+`pending_question` contains `ask_id`, `assignment_request_id`, `run_id`,
+`created_at`, `question`, `question_truncated`, `evidence_refs`,
+`evidence_truncated`, and `next_action`. Question text is limited to 2,000
+characters; evidence is limited to 16 references of at most 512 characters
+each. Evidence references do not include attachment bodies. The summary is visible without
+reading a transcript, including while automatic question delivery waits for the
+owner to become idle. It does not grant control authority over descendants or
+replace invocation-time validation.
 
 The session-start instructions include the same scoped `agent_definitions`
 capability projection as `list_agents`; it is a stable startup snapshot.
@@ -412,6 +422,10 @@ current assignment and does not create another final result.
 operation. While Pi is executing a model or tool operation, steering may remain
 queued until that operation reaches a safe boundary. Steering cannot stop a
 wedged tool.
+
+When an owner question blocks steering or interrupt, the `agent_busy` error
+includes the correlated `pending_question` summary and directs the exact owner
+to `reply_agent`; neither control bypasses the pending answer.
 
 ## `interrupt_agent`
 

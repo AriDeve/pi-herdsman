@@ -9,6 +9,10 @@
 - Use native mouse routing and transcript expansion, and OMP project/global definition locations.
 - Register one Herdsman runtime per OMP session even when linked-plugin and explicit extension paths alias the same bundle; preserve first-assignment acknowledgement and release registration on shutdown.
 - Keep native builtin tools registered before applying Agent allowlists; verify real `generalist` shell execution, `scout` reads, and empty-tool policies in the OMP check command.
+- Expose correlated, bounded pending owner questions and evidence references to the exact direct owner in `list_agents` and actionable blocked-control errors, without changing reply authority.
+- Derive child capability guidance from the effective tool policy, reapply native selection after deferred MCP discovery, and distinguish managed owner questions/final results from OMP agent-URI messaging.
+- Trace ask creation, idle deferral, input inclusion, delivery failures, and correlated replies through content-free session diagnostics.
+- Exercise provider-visible schemas and indirect MCP execution over OMP's native HTTP/SSE and stdio boundaries, including forbidden-target rejection.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

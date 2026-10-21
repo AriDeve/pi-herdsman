@@ -6577,7 +6577,21 @@ test("registered extensions preserve adjacent ask escalation and assignment resu
       },
     });
     registerExtension!(leadAgent.pi as never);
-    const leadContext = fakeContext();
+    const leadContext = fakeContext(leadAgent.entries);
+    const askDeliveryDiagnostics = () =>
+      leadAgent!.entries.flatMap((entry) => {
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          !("customType" in entry) ||
+          entry.customType !== "pi-herdsman-ask-delivery" ||
+          !("data" in entry) ||
+          !entry.data ||
+          typeof entry.data !== "object"
+        )
+          return [];
+        return [entry.data as Record<string, unknown>];
+      });
     t.mock.timers.enable({ apis: ["setTimeout"] });
     await leadAgent.events.get("session_start")![0](undefined, leadContext);
     const askWatcher = watchedMailboxDirectories.get(parentMailbox);
@@ -6586,6 +6600,21 @@ test("registered extensions preserve adjacent ask escalation and assignment resu
       failInitialAskDelivery,
       false,
       "initial compatible ask delivery should schedule a retry",
+    );
+    assert.deepEqual(
+      askDeliveryDiagnostics().map((entry) => entry.stage),
+      ["delivery_failed"],
+    );
+    assert.equal(
+      askDeliveryDiagnostics()[0]?.askId,
+      parentWaiting.pendingAskId,
+    );
+    assert.equal(askDeliveryDiagnostics()[0]?.requestId, parentRequestId);
+    assert.equal(askDeliveryDiagnostics()[0]?.errorCategory, "delivery_error");
+    assert.equal(askDeliveryDiagnostics()[0]?.retryDelayMs, 250);
+    assert.doesNotMatch(
+      JSON.stringify(askDeliveryDiagnostics()),
+      /temporary ask delivery failure|How should I answer/,
     );
     const retryingList = await registeredAgentTool(leadAgent, "list").execute(
       "list-retrying-ask",
@@ -6680,6 +6709,16 @@ test("registered extensions preserve adjacent ask escalation and assignment resu
       2,
       "existing watcher resumes ask delivery",
     );
+    assert.deepEqual(
+      askDeliveryDiagnostics().map((entry) => entry.stage),
+      ["delivery_failed", "queued_for_owner_input"],
+    );
+    for (const handler of leadAgent.events.get("context") ?? [])
+      await handler({ messages: [leadAgent.sent.at(-1)] }, leadContext);
+    assert.deepEqual(
+      askDeliveryDiagnostics().map((entry) => entry.stage),
+      ["delivery_failed", "queued_for_owner_input", "included_in_owner_input"],
+    );
     assert.equal(readAgentState(parentMailbox)?.runId, parent.runId);
     assert.equal(
       readAgentState(parentMailbox)?.pendingAskId,
@@ -6702,6 +6741,12 @@ test("registered extensions preserve adjacent ask escalation and assignment resu
     assert.equal(leadReply?.kind, "reply");
     assert.equal(leadReply?.askId, parentWaiting.pendingAskId);
     assert.equal(leadReply?.requestId === parentRequestId, false);
+    const replyDiagnostic = askDeliveryDiagnostics().find(
+      (entry) => entry.stage === "reply_acknowledged",
+    );
+    assert.equal(replyDiagnostic?.askId, parentWaiting.pendingAskId);
+    assert.equal(replyDiagnostic?.requestId, parentRequestId);
+    assert.equal(replyDiagnostic?.replyRequestId, leadReply?.requestId);
     assert.equal(
       readAgentState(parentMailbox)?.activeRequestId,
       parentRequestId,

@@ -248,6 +248,35 @@ test("asks and reply requests round-trip with strict correlation", () => {
   };
   writeAsk(path, ask);
   assert.deepEqual(readAsk(path), ask);
+  const summary = {
+    question: "Q".repeat(2000),
+    questionTruncated: true,
+    evidenceRefs: [
+      "result:reviewer#1",
+      ...Array.from(
+        { length: 15 },
+        (_, index) => `/${index}-${"p".repeat(508)}`,
+      ),
+    ],
+    evidenceTruncated: true,
+  };
+  writeAsk(path, { ...ask, questionSummary: summary });
+  assert.deepEqual(readAsk(path)?.questionSummary, summary);
+  for (const invalid of [
+    { ...summary, question: "Q".repeat(2001) },
+    { ...summary, evidenceRefs: Array(17).fill("result:reviewer#1") },
+    { ...summary, evidenceRefs: ["p".repeat(513)] },
+    { ...summary, evidenceRefs: [""] },
+    { ...summary, questionTruncated: "true" },
+    { ...summary, evidenceTruncated: undefined },
+    { ...summary, unexpected: "metadata" },
+  ]) {
+    assert.throws(
+      () => writeAsk(path, { ...ask, questionSummary: invalid } as AskRecord),
+      /Invalid ask question summary/,
+    );
+    assert.deepEqual(readAsk(path)?.questionSummary, summary);
+  }
   const request: RequestRecord = {
     version: 5,
     build: state.build,

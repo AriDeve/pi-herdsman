@@ -2096,6 +2096,10 @@ export function formatToolModelResult(
                 : undefined,
             ),
             evidenceLine("Startup process", startupProcessText?.slice(0, 4096)),
+            details.pending_question &&
+            typeof details.pending_question === "object"
+              ? `Pending owner question: ${JSON.stringify(details.pending_question)}`
+              : undefined,
           ].filter((line): line is string => line !== undefined)
         : []),
       ...(e.primary
@@ -2219,6 +2223,11 @@ export function formatToolModelResult(
       return [
         `${indent}${identity} · ${controls.join(" · ")}`,
         ...(session ? [`${indent}  session: ${session}`] : []),
+        ...(agent.pending_question && typeof agent.pending_question === "object"
+          ? [
+              `${indent}  pending owner question: ${JSON.stringify(agent.pending_question)}`,
+            ]
+          : []),
         ...(agent.state === "unknown" && value(agent.diagnostic)
           ? [`${indent}  diagnostic: ${value(agent.diagnostic)}`]
           : []),

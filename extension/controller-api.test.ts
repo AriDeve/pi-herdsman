@@ -9130,7 +9130,13 @@ test("lead steers a blocked parent waiting for direct-child work", async () => {
       agentLabel: parent.agentLabel,
       paneId: parent.paneId,
       piSessionId: parent.piSessionId,
-      question: "owner clarification",
+      question: `<file name="/tmp/options.md">\n${"opaque evidence\n".repeat(500)}\n</file>\n\nQuestion:\nowner clarification`,
+      questionSummary: {
+        question: "owner clarification",
+        questionTruncated: false,
+        evidenceRefs: ["/tmp/options.md", "result:research#1"],
+        evidenceTruncated: false,
+      },
       createdAt: Date.now(),
     });
     writeAgentState(parentMailbox, {
@@ -9149,6 +9155,91 @@ test("lead steers a blocked parent waiting for direct-child work", async () => {
       "inspect_agent",
       "reply_agent",
     ]);
+    assert.equal(
+      ownerAsk.details.agents[0].pending_question?.ask_id,
+      ownerAskId,
+    );
+    assert.equal(
+      ownerAsk.details.agents[0].pending_question?.assignment_request_id,
+      REQUEST_ID,
+    );
+    assert.equal(
+      ownerAsk.details.agents[0].pending_question?.question,
+      "owner clarification",
+    );
+    assert.match(ownerAsk.content[0].text, /owner clarification/);
+    assert.deepEqual(
+      ownerAsk.details.agents[0].pending_question.evidence_refs,
+      ["/tmp/options.md", "result:research#1"],
+    );
+    assert.doesNotMatch(ownerAsk.content[0].text, /opaque evidence/);
+    for (const action of ["steer", "interrupt"] as const) {
+      const rejected = await agentTool(pi, action).execute(
+        action,
+        { agent: parent.agentLabel, message: "continue" },
+        undefined,
+        undefined,
+        context,
+      );
+      assert.equal(rejected.details.error.category, "agent_busy");
+      assert.equal(
+        rejected.details.error.details?.pending_question?.ask_id,
+        ownerAskId,
+      );
+      assert.match(rejected.details.error.nextAction, /reply_agent/);
+      assert.match(rejected.content[0].text, /owner clarification/);
+    }
+    const childAskId = randomUUID();
+    writeAgentState(childMailbox, { ...child, pendingAskId: childAskId });
+    writeAsk(childMailbox, {
+      version: 5,
+      askId: childAskId,
+      requestId: child.activeRequestId!,
+      runId: child.runId,
+      ownerSessionId: child.ownerSessionId,
+      workspaceId: child.workspaceId,
+      agentLabel: child.agentLabel,
+      paneId: child.paneId,
+      piSessionId: child.piSessionId,
+      question: "private descendant decision",
+      createdAt: Date.now(),
+    });
+    const descendantAsk = await agentTool(pi, "list").execute(
+      "list",
+      {},
+      undefined,
+      undefined,
+      context,
+    );
+    const descendant = descendantAsk.details.agents.find(
+      (record: { agent: string }) => record.agent === child.agentLabel,
+    );
+    assert.equal(descendant.pending_question, undefined);
+    assert.doesNotMatch(
+      descendantAsk.content[0].text,
+      /private descendant decision/,
+    );
+    removeAsk(childMailbox);
+    writeAgentState(childMailbox, {
+      ...child,
+      activeRequestId: undefined,
+      completedRequestId: child.activeRequestId,
+    });
+    writeAgentState(parentMailbox, {
+      ...parent,
+      pendingAskId: randomUUID(),
+    });
+    const mismatchedAsk = await agentTool(pi, "list").execute(
+      "list",
+      {},
+      undefined,
+      undefined,
+      context,
+    );
+    assert.equal(mismatchedAsk.details.agents[0].pending_question, undefined);
+    assert.ok(
+      !mismatchedAsk.details.agents[0].available_tools.includes("reply_agent"),
+    );
     removeAsk(parentMailbox, ownerAskId);
     writeAgentState(parentMailbox, parent);
 

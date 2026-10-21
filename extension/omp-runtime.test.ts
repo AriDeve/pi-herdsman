@@ -8,6 +8,10 @@ import type {
 import { registerOmpRuntime } from "./omp-runtime.ts";
 import { controlMarker } from "./mailbox.ts";
 import { Type } from "typebox";
+import {
+  registerOmpLaunchPolicy,
+  type OmpLaunchPolicy,
+} from "./agent-definitions.ts";
 
 type Event = Record<string, unknown>;
 const ACCEPTED = "11111111-1111-4111-8111-111111111111";
@@ -168,4 +172,56 @@ test("sequential orchestration calls cannot overlap and rejection releases the n
     ["rejected", "fulfilled"],
   );
   assert.deepEqual(order, ["first-start", "first-end", "second"]);
+});
+
+test("native Agent policy rejects denied targets even after tool activation changes", async () => {
+  const handlers = new Map<string, (event: Event) => unknown>();
+  const policy: OmpLaunchPolicy = {
+    tools: ["read", "write", "mcp__check_allowed"],
+    excluded: ["mcp__check_denied"],
+    noBuiltinTools: false,
+    requiredTools: ["ask_owner"],
+    skillDirectories: [],
+  };
+  let active = ["bash", "read", "write", "mcp__check_denied"];
+  const all = [...active, "ask_owner", "mcp__check_allowed"].map((name) => ({
+    name,
+    sourceInfo: { source: name.startsWith("mcp__") ? "mcp" : "builtin" },
+  }));
+  const pi = {
+    registerFlag() {},
+    getFlag: () => JSON.stringify(policy),
+    getAllTools: () => all,
+    getActiveTools: () => active,
+    async setActiveTools(names: string[]) {
+      active = names;
+    },
+    on(name: string, handler: (event: Event) => unknown) {
+      handlers.set(name, handler);
+    },
+  } as unknown as ExtensionAPI;
+  registerOmpLaunchPolicy(pi);
+  await handlers.get("session_start")!({});
+  assert.deepEqual(active, [
+    "read",
+    "write",
+    "ask_owner",
+    "mcp__check_allowed",
+  ]);
+  // Another extension may change activation; the execution policy still applies.
+  await pi.setActiveTools(all.map((tool) => tool.name));
+  for (const toolName of ["bash", "mcp__check_denied"]) {
+    const result = handlers.get("tool_call")!({ toolName });
+    assert.ok(result && typeof result === "object" && "block" in result);
+    assert.equal(result.block, true);
+  }
+  for (const toolName of ["read", "write", "ask_owner", "mcp__check_allowed"])
+    assert.equal(handlers.get("tool_call")!({ toolName }), undefined);
+  await handlers.get("before_agent_start")!({ systemPrompt: ["Base policy"] });
+  assert.deepEqual(active, [
+    "read",
+    "write",
+    "ask_owner",
+    "mcp__check_allowed",
+  ]);
 });

@@ -305,6 +305,14 @@ and Pi's configured/default selection remains in effect. An explicit `tools`
 allowlist is augmented with the managed agent's mandatory role tools; the
 configuration-only `agent` name is excluded from that allowlist.
 
+Child runtime instructions project the same effective tool policy and active
+top-level tools used by native OMP. Routing guidance is conditional on permitted
+capabilities: execution-capable Agents can use bounded Bash; restricted Agents
+use their permitted read/search tools. Wrapper and MCP device routes do not
+grant access to an otherwise denied target. The policy is reapplied before
+model-input preparation so deferred MCP discovery cannot broaden the advertised
+tool surface.
+
 ## Body composition
 
 The body is text after the closing `---`, trimmed at its outer boundaries.

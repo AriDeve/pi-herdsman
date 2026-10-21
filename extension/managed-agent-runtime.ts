@@ -92,6 +92,7 @@ import {
 import {
   importResultBindings,
   resolveMessageFiles,
+  recordAskDelivery,
 } from "./agent-controller.ts";
 import { fail, OperationError } from "./errors.ts";
 import { readConfig, readEffectiveConfig } from "./config.ts";
@@ -300,6 +301,7 @@ function askRecordBytes(
   text: string,
   createdAt: number,
   resultBindings: readonly ResultBinding[],
+  questionSummary: NonNullable<AskRecord["questionSummary"]>,
 ): number {
   return mailboxRecordBytes({
     version: 5,
@@ -312,9 +314,23 @@ function askRecordBytes(
     paneId: state.paneId,
     piSessionId: state.piSessionId,
     question: text,
+    questionSummary,
     ...(resultBindings.length ? { resultBindings: [...resultBindings] } : {}),
     createdAt,
   });
+}
+
+function askQuestionSummary(
+  question: string,
+  refs: readonly string[],
+): NonNullable<AskRecord["questionSummary"]> {
+  const bounded = refs.filter((ref) => ref.length <= 512).slice(0, 16);
+  return {
+    question: question.slice(0, 2000),
+    questionTruncated: question.length > 2000,
+    evidenceRefs: bounded,
+    evidenceTruncated: bounded.length !== refs.length,
+  };
 }
 
 function validateManagedAgentDefinition(definitions: AgentDefinition[]): void {
@@ -1047,13 +1063,18 @@ export function createManagedAgentAskOwnerHandler(options: {
     askId: string,
     createdAt: number,
     limits: { inline: { bytes: number }; mailbox: { bytes: number } },
-  ): Promise<{ text: string; resultBindings: unknown[] }>;
+  ): Promise<{
+    text: string;
+    resultBindings: ResultBinding[];
+    questionSummary: NonNullable<AskRecord["questionSummary"]>;
+  }>;
   checkMailboxSize(bytes: number, limit: number): void;
   claimLock(mailbox: string, state: ManagedAgentState): () => void;
   readState(mailbox: string): ManagedAgentState | undefined;
   writeState(mailbox: string, state: ManagedAgentState): void;
   writeAsk(mailbox: string, ask: AskRecord): void;
   removeAsk(mailbox: string): void;
+  created(ask: AskRecord, ctx: ExtensionContext): void;
   latest(value: string): void;
 }) {
   return async (
@@ -1100,8 +1121,9 @@ export function createManagedAgentAskOwnerHandler(options: {
       paneId: state.paneId,
       piSessionId: state.piSessionId,
       question: prepared.text,
+      questionSummary: prepared.questionSummary,
       ...(prepared.resultBindings.length
-        ? { resultBindings: prepared.resultBindings as any }
+        ? { resultBindings: prepared.resultBindings }
         : {}),
       createdAt: askCreatedAt,
     };
@@ -1124,6 +1146,7 @@ export function createManagedAgentAskOwnerHandler(options: {
     } finally {
       release();
     }
+    options.created(ask, ctx);
     options.latest("");
     return {
       content: [
@@ -1468,6 +1491,7 @@ export function registerManagedAgentInputHandlers(
       } finally {
         release();
       }
+      recordAskDelivery(pi, ctx, ask, "reply_accepted", { replyRequestId: id });
       options.setState(candidate);
       options.requestState.reset();
       options.setLatest("");
@@ -2492,8 +2516,18 @@ export function registerManagedAgentRuntime(
       rejectionReason: requestState.askRejectionReason,
       isSoleToolCall: (ctx) => currentTurnIsSoleToolCall(ctx, "ask_owner"),
       messageLimits: options.messageLimits,
-      prepare: (ctx, question, files, state, askId, createdAt, limits) =>
-        prepareMessageInput(
+      prepare: async (
+        ctx,
+        question,
+        files,
+        state,
+        askId,
+        createdAt,
+        limits,
+      ) => {
+        let questionSummary:
+          NonNullable<AskRecord["questionSummary"]> | undefined;
+        const prepared = prepareMessageInput(
           question,
           options.resolveMessageFiles(ctx, files, "ask_owner"),
           state.cwd,
@@ -2502,16 +2536,25 @@ export function registerManagedAgentRuntime(
           {
             inlineLimitBytes: limits.inline.bytes,
             mailboxLimitBytes: limits.mailbox.bytes,
-            serializedBytes: (text, bindings) =>
-              askRecordBytes(
+            serializedBytes: (text, bindings, evidenceRefs) => {
+              questionSummary ??= askQuestionSummary(question, evidenceRefs);
+              return askRecordBytes(
                 state,
                 askId,
                 text,
                 createdAt,
-                bindings as ResultBinding[],
-              ),
+                bindings,
+                questionSummary,
+              );
+            },
           },
-        ),
+        );
+        return {
+          ...prepared,
+          // Preparation always evaluates serializedBytes before returning.
+          questionSummary: questionSummary!,
+        };
+      },
       checkMailboxSize: (bytes, limit) => {
         if (bytes > limit)
           fail(
@@ -2529,6 +2572,7 @@ export function registerManagedAgentRuntime(
       writeState: writeAgentState,
       writeAsk,
       removeAsk: removeMailboxAsk,
+      created: (ask, ctx) => recordAskDelivery(pi, ctx, ask, "created"),
       latest: (value) => {
         execution.latest = value;
       },

@@ -107,6 +107,12 @@ export interface AskRecord {
   paneId: string;
   piSessionId: string;
   question: string;
+  questionSummary?: {
+    question: string;
+    questionTruncated: boolean;
+    evidenceRefs: string[];
+    evidenceTruncated: boolean;
+  };
   resultBindings?: ResultBinding[];
   createdAt: number;
 }
@@ -448,6 +454,7 @@ function validate(
               "paneId",
               "piSessionId",
               "question",
+              "questionSummary",
               "resultBindings",
               "createdAt",
             ]
@@ -718,6 +725,34 @@ function validate(
   } else if (kind === "ask") {
     if (typeof v.question !== "string" || !v.question.trim())
       throw new Error("Invalid ask question");
+    if (v.questionSummary !== undefined) {
+      const summary = v.questionSummary;
+      if (
+        !summary ||
+        typeof summary !== "object" ||
+        Array.isArray(summary) ||
+        Object.keys(summary).some(
+          (key) =>
+            ![
+              "question",
+              "questionTruncated",
+              "evidenceRefs",
+              "evidenceTruncated",
+            ].includes(key),
+        ) ||
+        typeof summary.question !== "string" ||
+        summary.question.length > 2000 ||
+        typeof summary.questionTruncated !== "boolean" ||
+        typeof summary.evidenceTruncated !== "boolean" ||
+        !Array.isArray(summary.evidenceRefs) ||
+        summary.evidenceRefs.length > 16 ||
+        !summary.evidenceRefs.every(
+          (ref: unknown) =>
+            typeof ref === "string" && ref.length > 0 && ref.length <= 512,
+        )
+      )
+        throw new Error("Invalid ask question summary");
+    }
     if (
       v.resultBindings !== undefined &&
       (!Array.isArray(v.resultBindings) ||

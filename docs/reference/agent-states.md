@@ -43,6 +43,10 @@ non-direct descendants remain fail-closed with no actions.
 
 An agent waiting on a valid `ask_owner` reply projects as `blocked` after its ask
 turn settles. Answer through the exact direct owner using `reply_agent` with the exact `agent` identity.
+The exact direct owner's `list_agents` record exposes a bounded
+`pending_question` with the question, correlation IDs, evidence references, and
+the supported next action. Descendant visibility does not expose another
+owner's question.
 
 A delegating parent can also project as `blocked` while it waits for direct
 children. That is progress-capable parent waiting, not evidence that the child

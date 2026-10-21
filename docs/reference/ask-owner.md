@@ -6,6 +6,9 @@
 decision required to continue the current assignment.
 
 It is not a generic messaging channel.
+Routine completion is the Agent's final response, delivered as its assignment
+result. Generic OMP `agent://` messaging is a separate mechanism, not a managed
+child's owner channel; a Lead role is not a registered destination named `lead`.
 
 ## Availability
 
@@ -87,6 +90,37 @@ chain.
 
 If a delegating agent needs a lead decision, it independently calls `ask_owner`
 on its own direct ownership edge.
+
+Use `list_agents` to discover a bounded `pending_question` summary without
+reading the child's transcript. Only the exact direct owner receives it.
+Automatic question delivery waits for the owner session to be idle; an Agent
+can already be blocked during that interval. A deferred question is not
+evidence of lost delivery. `steer_agent` and `interrupt_agent` do not replace an
+owner answer; their blocked-control errors direct the owner to `reply_agent`.
+
+### Correlated delivery diagnostics
+
+Persisted owner and child sessions contain custom entries with
+`customType: "pi-herdsman-ask-delivery"`. Filter their `data` by the same
+`askId` to trace delivery without logging question text or attachment bodies.
+
+| `stage`                   | Session | Meaning                                                                                        |
+| ------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `created`                 | Child   | The ask record and pending state were durably written.                                         |
+| `waiting_for_owner_idle`  | Owner   | Delivery is deferred while the exact owner is busy.                                            |
+| `queued_for_owner_input`  | Owner   | The owner-session send accepted the correlated ask; this alone does not prove input inclusion. |
+| `included_in_owner_input` | Owner   | The context hook observed the exact correlated ask in model-input messages.                    |
+| `delivery_failed`         | Owner   | Delivery encountered an error; category and retry delay identify the failed attempt.           |
+| `reply_accepted`          | Child   | The correlated reply was accepted and the pending ask cleared.                                 |
+| `reply_acknowledged`      | Owner   | The owner observed successful acknowledgement of the reply request.                            |
+
+Entries include assignment, run, owner, workspace, Agent, pane and Pi-session
+identifiers, observation time/session, and reply request ID when applicable.
+Failure metadata records a stable error category, not arbitrary error contents.
+Repeated observations of the same stage and correlation are coalesced.
+Diagnostics are best-effort observations, not delivery or authorization state:
+an absent entry does not establish failure, and a diagnostic write failure
+does not undo an accepted ask or reply.
 
 ## Reply
 
