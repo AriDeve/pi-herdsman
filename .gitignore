@@ -14,3 +14,7 @@ dist/
 *.pfx
 /video/
 .local
+
+# [epiq]: local hydrated state is never committed
+.epiq/events/
+.epiq/log/
