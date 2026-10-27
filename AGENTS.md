@@ -173,3 +173,17 @@ formatting/validation; see [Smoke testing](docs/development/smoke-testing.md).
 ## Validation
 
 - Follow the detailed validation order in [Development validation](docs/development/validation.md).
+
+## Agent skills
+
+### Issue tracker
+
+Engineering skills track tickets in Epiq. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five canonical Epiq tags. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context layout. See `docs/agents/domain.md`.
