@@ -171,6 +171,7 @@ test("managed Agent surfaces distinguish delegation capability from leaf access"
       "reply_agent",
       "steer_agent",
       "read_agent_transcript",
+      "read_agent_responses",
     ].sort(),
   );
   delegating.events.get("session_shutdown")?.[0]();
@@ -331,6 +332,12 @@ test("each Agent operation has its own schema without projection", () => {
       { agent: "worker" },
       { agent: "worker", session: "x" },
       ["agent"],
+    ],
+    [
+      "read_agent_responses",
+      { session: "11111111-1111-4111-8111-111111111111", offset: 0 },
+      { session: "11111111-1111-4111-8111-111111111111", agent: "x" },
+      [],
     ],
   ] as const;
   for (const [name, valid, crossOperation, required] of cases) {

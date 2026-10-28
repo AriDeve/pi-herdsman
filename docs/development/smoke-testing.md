@@ -268,7 +268,7 @@ Verify:
 
 Launch a delegating managed agent with an explicit ordinary execution-tool
 allowlist and ask it to delegate one bounded scout task. Verify that it retains
-those ordinary tools and can call all nine coordination tools plus
+those ordinary tools and can call all ten coordination tools plus
 `ask_owner`, then verify that the spawned scout is a leaf with its normal tools
 and `ask_owner` but no delegation tools. Also verify that role-required tools
 are not removed by `excludeTools`.

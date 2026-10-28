@@ -20,6 +20,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { fail, markRetryAttempted, OperationError } from "./errors.ts";
+import {
+  assignmentResponses,
+  responseChunk,
+  responseSummary,
+  RESPONSE_PAGE_SIZE,
+  sessionResponses,
+} from "./response-recovery.ts";
 import type { ErrorCategory } from "./errors.ts";
 import {
   inspectSessionFile,
@@ -704,6 +711,8 @@ function agentToolName(action: string): string {
       return "inspect_agent";
     case "transcript":
       return "read_agent_transcript";
+    case "responses":
+      return "read_agent_responses";
     default:
       return action;
   }
@@ -729,7 +738,10 @@ export const AGENT_HANDOFF_GUIDANCE =
   "with a new bounded assignment. Each live Agent generation exists for one " +
   "assignment; after its terminal result is delivered, Herdsman cleans up that " +
   "generation. Agent labels identify the current live generation; exact Pi " +
-  "sessions identify historical context and continuation. For new or updated " +
+  "sessions identify historical context and continuation. To recover a cleaned-up " +
+  "Agent's earlier visible responses, use read_agent_responses with your own " +
+  "result ref (that assignment) or the exact session (whole session); do not " +
+  "re-ask the Agent. For new or updated " +
   "assignments, `task`/`message` and `files` carry assignment evidence. " +
   "Complete strict UTF-8 text may be embedded; other files remain canonical " +
   "local references and are not copied or snapshotted. " +
@@ -1800,6 +1812,50 @@ export function openOwnedAssignmentSession(
     : undefined;
 }
 
+export function assignmentSessionSelector(
+  ctx: ExtensionContext,
+  raw: string,
+  operation = "continue",
+): AssignmentSessionSelector {
+  const value = raw.trim();
+  if (!value)
+    fail(
+      "invalid_request",
+      "assignment requires an exact session path or full UUID session ID",
+      operation,
+    );
+  const pathLike =
+    value.includes("/") ||
+    value.includes("\\") ||
+    value.endsWith(".jsonl") ||
+    value.startsWith("~");
+  if (!pathLike) {
+    if (!validId(value))
+      fail(
+        "invalid_request",
+        "assignment session must be an exact .jsonl path or full UUID session ID; prefixes are not allowed",
+        operation,
+      );
+    return { kind: "id", value };
+  } else {
+    const path =
+      value === "~"
+        ? homedir()
+        : value.startsWith("~/") || value.startsWith("~\\")
+          ? resolve(homedir(), value.slice(2))
+          : resolve(ctx.cwd, value);
+    try {
+      return { kind: "path", value: canonicalSessionPath(path) };
+    } catch (error) {
+      fail(
+        "invalid_request",
+        error instanceof Error ? error.message : String(error),
+        operation,
+      );
+    }
+  }
+}
+
 export function resolveAssignmentSession(
   ctx: ExtensionContext,
   raw: string,
@@ -1811,44 +1867,7 @@ export function resolveAssignmentSession(
     isContextRetired?: (manager: ForeignSessionSnapshot) => boolean;
   } = {},
 ): ResolvedAssignmentSession {
-  const value = raw.trim();
-  if (!value)
-    fail(
-      "invalid_request",
-      "assignment requires an exact session path or full UUID session ID",
-      "continue",
-    );
-  const pathLike =
-    value.includes("/") ||
-    value.includes("\\") ||
-    value.endsWith(".jsonl") ||
-    value.startsWith("~");
-  let selector: AssignmentSessionSelector;
-  if (!pathLike) {
-    if (!validId(value))
-      fail(
-        "invalid_request",
-        "assignment session must be an exact .jsonl path or full UUID session ID; prefixes are not allowed",
-        "continue",
-      );
-    selector = { kind: "id", value };
-  } else {
-    const path =
-      value === "~"
-        ? homedir()
-        : value.startsWith("~/") || value.startsWith("~\\")
-          ? resolve(homedir(), value.slice(2))
-          : resolve(ctx.cwd, value);
-    try {
-      selector = { kind: "path", value: canonicalSessionPath(path) };
-    } catch (error) {
-      fail(
-        "invalid_request",
-        error instanceof Error ? error.message : String(error),
-        "continue",
-      );
-    }
-  }
+  const selector = assignmentSessionSelector(ctx, raw);
   const callerId = ctx.sessionManager.getSessionId();
   const visited = new Set<string>([callerId]);
   const walk = (
@@ -2237,7 +2256,14 @@ export type Params =
       files?: string[];
     }
   | { action: "reply"; agent: string; message: string; files?: string[] }
-  | { action: "close" | "inspect" | "transcript"; agent: string };
+  | { action: "close" | "inspect" | "transcript"; agent: string }
+  | {
+      action: "responses";
+      session?: string;
+      result?: string;
+      response?: string;
+      offset?: number;
+    };
 
 export function validateAssignmentRequest(params: Params): void {
   if (params.action !== "delegate" && params.action !== "continue") return;
@@ -4430,6 +4456,238 @@ export function createAgentController(
         : {}),
     };
   };
+  const responsesAction = (
+    context: ExtensionContext,
+    p: Extract<Params, { action: "responses" }>,
+  ): Record<string, unknown> => {
+    const operation = "responses";
+    if ((p.session === undefined) === (p.result === undefined))
+      fail(
+        "invalid_request",
+        "read_agent_responses requires exactly one of session or result",
+        operation,
+      );
+    const ownerId = context.sessionManager.getSessionId();
+    let selectedEntryId: string | undefined;
+    let assignment: { requestId: string; resultRef: string } | undefined;
+    let owned: OwnedAssignmentSession[];
+    let evidenceUnavailable = false;
+    if (p.result !== undefined) {
+      const semantic = parseSemanticResultRef(p.result);
+      if (!semantic)
+        fail(
+          "invalid_request",
+          `Invalid result ref: ${p.result}. Copy the exact result ref shown by the agent completion.`,
+          operation,
+        );
+      // Only this session's own delivered results prove assignment ownership;
+      // imported or forwarded bindings never reach this scan.
+      const matches = context.sessionManager.getBranch().filter((entry) => {
+        const details = agentResultDetails(entry);
+        return (
+          details?.ownerSessionId === ownerId &&
+          details.agentLabel === semantic.agent &&
+          details.resultIndex === semantic.index
+        );
+      });
+      if (!matches.length)
+        fail(
+          "target_not_found",
+          "No result owned by this session matches that result ref",
+          operation,
+        );
+      if (matches.length > 1)
+        fail(
+          "target_ambiguous",
+          "Result ref matched multiple owned results",
+          operation,
+        );
+      const details = agentResultDetails(matches[0])!;
+      owned = ownedAssignmentChildren(matches, ownerId, false, () => {
+        evidenceUnavailable = true;
+      });
+      if (details.status !== "completed")
+        fail(
+          "invalid_request",
+          "Result ref does not identify a completed assignment",
+          operation,
+        );
+      if (owned.length !== 1)
+        fail(
+          "target_not_found",
+          "Persisted Pi session for this result is unavailable or its recorded identity is malformed",
+          operation,
+        );
+      if (
+        typeof details.responseEntryId !== "string" ||
+        !details.responseEntryId ||
+        typeof details.requestId !== "string"
+      )
+        fail(
+          "invalid_request",
+          "This result has no recorded selected-response provenance, so its assignment boundary cannot be proven",
+          operation,
+          {
+            nextAction: `Use read_agent_responses with session ${owned[0]!.id} to browse the whole saved session; that scope is session-wide, not assignment-scoped.`,
+          },
+        );
+      selectedEntryId = details.responseEntryId;
+      assignment = { requestId: details.requestId, resultRef: p.result };
+    } else {
+      const selector = assignmentSessionSelector(
+        context,
+        p.session!,
+        operation,
+      );
+      // Direct ownership only: no recursive walk through descendants.
+      owned = ownedAssignmentChildren(
+        context.sessionManager.getEntries(),
+        ownerId,
+        true,
+        () => {
+          evidenceUnavailable = true;
+        },
+      ).filter((child) =>
+        selector.kind === "id"
+          ? child.id === selector.value
+          : child.path === selector.value,
+      );
+      if (owned.length > 1)
+        fail(
+          "target_ambiguous",
+          "Session identity matched multiple owned saved sessions",
+          operation,
+        );
+    }
+    const child = owned[0];
+    if (!child)
+      fail(
+        "target_not_found",
+        evidenceUnavailable
+          ? "Session is not directly owned by this session, or owned session evidence is unavailable (missing file or malformed record), so ownership cannot be proven"
+          : "Session is not directly owned by this session",
+        operation,
+      );
+    let manager: ForeignSessionSnapshot | undefined;
+    try {
+      manager = openOwnedAssignmentSession(child);
+    } catch (error) {
+      fail(
+        "target_not_found",
+        `Persisted Pi session is unavailable: ${String(error)}`,
+        operation,
+      );
+    }
+    if (!manager)
+      fail(
+        "target_ambiguous",
+        "Persisted Pi session identity contradicts the recorded ownership evidence",
+        operation,
+      );
+    const entries = manager.getEntries();
+    let responses: ReturnType<typeof sessionResponses>;
+    if (assignment) {
+      const markers = entries.filter((entry) => {
+        if (
+          entry.type !== "custom" ||
+          entry.customType !== "pi-herdsman-agent-required-evidence"
+        )
+          return false;
+        const data = entry.data;
+        return (
+          typeof data === "object" &&
+          data !== null &&
+          !Array.isArray(data) &&
+          "requestId" in data &&
+          data.requestId === assignment.requestId &&
+          "sessionId" in data &&
+          data.sessionId === child.id &&
+          "ownerSessionId" in data &&
+          data.ownerSessionId === ownerId
+        );
+      });
+      if (markers.length !== 1)
+        fail(
+          "target_ambiguous",
+          "Persisted session does not prove exactly one accepted assignment boundary for this result",
+          operation,
+        );
+      responses = assignmentResponses(
+        entries,
+        markers[0]!.id,
+        selectedEntryId!,
+      );
+      if (!responses.length)
+        fail(
+          "target_ambiguous",
+          "The selected response is not provable within the persisted assignment boundary",
+          operation,
+        );
+    } else responses = sessionResponses(entries);
+    const common = {
+      ok: true,
+      action: "responses",
+      scope: assignment ? "assignment" : "session",
+      session_id: child.id,
+      agent: child.label,
+      presentation_agent_definition: child.definition,
+      ...(assignment ? { result_ref: assignment.resultRef } : {}),
+      ...(selectedEntryId ? { selected_response: selectedEntryId } : {}),
+      total_responses: responses.length,
+    };
+    const offset = p.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0)
+      fail(
+        "invalid_request",
+        "offset must be a non-negative integer",
+        operation,
+      );
+    if (p.response === undefined) {
+      if (offset > responses.length || (offset === responses.length && offset))
+        fail(
+          "invalid_request",
+          `offset ${offset} is beyond the ${responses.length} responses in this scope`,
+          operation,
+        );
+      const page = responses.slice(offset, offset + RESPONSE_PAGE_SIZE);
+      return {
+        ...common,
+        offset,
+        ...(offset + page.length < responses.length
+          ? { next_offset: offset + page.length }
+          : {}),
+        responses: page.map((response, index) =>
+          responseSummary(response, offset + index, selectedEntryId),
+        ),
+      };
+    }
+    const index = responses.findIndex((response) => response.id === p.response);
+    if (index < 0)
+      fail(
+        "target_not_found",
+        "Response is not part of this recovery scope",
+        operation,
+      );
+    const response = responses[index]!;
+    const chunk = responseChunk(response.text, offset);
+    if (offset >= chunk.total)
+      fail(
+        "invalid_request",
+        `offset ${offset} is beyond the ${chunk.total} characters of this response`,
+        operation,
+      );
+    return {
+      ...common,
+      response: p.response,
+      response_selected: response.id === selectedEntryId,
+      response_characters: chunk.total,
+      offset,
+      ...(chunk.nextOffset !== undefined
+        ? { next_offset: chunk.nextOffset }
+        : {}),
+      text: chunk.text,
+    };
+  };
   const transcriptAction = async (
     context: ExtensionContext,
     agentLabel: string,
@@ -5799,7 +6057,15 @@ export function createAgentController(
         const completion = truncateModelText(
           result.status === "completed"
             ? result.text!
-            : (result.error?.message ?? "Agent failed"),
+            : [
+                result.error?.message ?? "Agent failed",
+                ...(result.error?.code === "execution_error" ||
+                result.error?.code === "aborted"
+                  ? [
+                      `Runtime failure details: errorStatus=${result.error.runtime?.errorStatus ?? "unavailable"}; errorId=${result.error.runtime?.errorId ?? "unavailable"}.`,
+                    ]
+                  : []),
+              ].join("\n"),
           {
             keep: "head",
             sessionId: runtime.piSessionId ?? runtime.runId,
@@ -5849,7 +6115,16 @@ export function createAgentController(
         ].join(" · ");
         const content = [
           header,
-          ...(semanticResult ? [`Result ref: ${semanticResult.ref}`] : []),
+          ...(result.status === "completed"
+            ? [
+                "Execution completed with a selected non-empty visible response; this does not establish owner acceptance or deliverable completeness or correctness.",
+              ]
+            : []),
+          ...(semanticResult
+            ? [
+                `Result ref: ${semanticResult.ref}${result.responseEntryId ? " · read_agent_responses recovers this assignment's visible responses" : ""}`,
+              ]
+            : []),
           completion.content,
           ...(retirement ? [retirement] : []),
           ...(status ? [status.content] : []),
@@ -5870,6 +6145,9 @@ export function createAgentController(
             : {}),
           agentDefinition: runtime.agentDefinition,
           status: result.status,
+          ...(result.responseEntryId
+            ? { responseEntryId: result.responseEntryId }
+            : {}),
           sessionRetired: sessionRetired ?? null,
           ...(elapsedMs !== undefined ? { elapsedMs } : {}),
           contextUsage: result.contextUsage,
@@ -7339,6 +7617,39 @@ export function createAgentController(
       { agent: Type.String({ pattern: AGENT_LABEL_PATTERN.source }) },
       { additionalProperties: false },
     );
+    const agentResponsesParameters = Type.Object(
+      {
+        session: Type.Optional(
+          Type.String({
+            description:
+              "Exact saved Pi session path or full UUID of a directly owned Agent. Scope is the whole session.",
+            minLength: 1,
+          }),
+        ),
+        result: Type.Optional(
+          Type.String({
+            description:
+              "Exact result ref from your own Agent completion. Scope is that assignment only.",
+            minLength: 1,
+          }),
+        ),
+        response: Type.Optional(
+          Type.String({
+            description:
+              "Response id from a previous listing; returns that response's text.",
+            minLength: 1,
+          }),
+        ),
+        offset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "Listing: first response index. With response: character offset. Copy next_offset to continue.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    );
     const agentTool = {
       name: "list_agents",
       label: "list agents",
@@ -7716,6 +8027,34 @@ export function createAgentController(
       renderResult: (r: any, o: any, t: any, c: any) =>
         renderCoordinationResult("agent", "transcript", r, o, t, c),
     });
+    pi.registerTool({
+      ...agentTool,
+      name: "read_agent_responses",
+      label: "read agent responses",
+      description:
+        "Recover visible assistant responses from a directly owned Agent, including after cleanup. Pass result for the responses of that one assignment, or session for every response in the exact saved session. Without response it lists bounded summaries; with response it returns one response in bounded chunks. Reads saved evidence only.",
+      parameters: agentResponsesParameters,
+      promptSnippet: undefined,
+      promptGuidelines: undefined,
+      execute: (
+        id: string,
+        p: any,
+        signal: AbortSignal | undefined,
+        update: unknown,
+        ctx: ExtensionContext,
+      ) =>
+        agentTool.execute(
+          id,
+          { action: "responses", ...p },
+          signal,
+          update,
+          ctx,
+        ),
+      renderCall: (a: unknown, t: any, c: any) =>
+        renderCoordinationCall("agent", "responses", a, t, c),
+      renderResult: (r: any, o: any, t: any, c: any) =>
+        renderCoordinationResult("agent", "responses", r, o, t, c),
+    });
   };
   const resetAssignmentGuidance = (): void => {
     assignGuidanceSent = false;
@@ -7759,6 +8098,7 @@ export function createAgentController(
         return closeAction(ctx, params.agent, signal);
       if (params.action === "transcript")
         return transcriptAction(ctx, params.agent, signal);
+      if (params.action === "responses") return responsesAction(ctx, params);
       if (
         params.action === "steer" ||
         params.action === "interrupt" ||
@@ -7788,13 +8128,16 @@ export function createAgentController(
     if (
       params.action === "list" ||
       params.action === "inspect" ||
-      params.action === "transcript"
+      params.action === "transcript" ||
+      params.action === "responses"
     )
-      return params.action === "list"
-        ? listAction(ctx, signal)
-        : params.action === "inspect"
-          ? controlAction(ctx, params, signal)
-          : transcriptAction(ctx, params.agent, signal);
+      return params.action === "responses"
+        ? responsesAction(ctx, params)
+        : params.action === "list"
+          ? listAction(ctx, signal)
+          : params.action === "inspect"
+            ? controlAction(ctx, params, signal)
+            : transcriptAction(ctx, params.agent, signal);
     const release = claimDelegationLock(
       options.workspaceId(),
       ctx.sessionManager.getSessionId(),

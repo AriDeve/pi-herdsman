@@ -2,7 +2,7 @@
 
 [Documentation index](../README.md) · [Coordination](../concepts/coordination.md)
 
-Managed-agent operations are exposed as nine distinct tools:
+Managed-agent operations are exposed as ten distinct tools:
 
 ```text
 list_agents
@@ -14,6 +14,7 @@ reply_agent
 close_agent
 inspect_agent
 read_agent_transcript
+read_agent_responses
 ```
 
 Each tool accepts only its operation's fields. Schemas require necessary fields
@@ -45,6 +46,10 @@ still require trusted project approval. A fresh delegation starts a new Pi
 session.
 Each accepted definition delegation creates one agent generation for one
 assignment. The terminal result is delivered once and the agent is cleaned up.
+`completed` means execution completed with a selected non-empty visible assistant
+response; it does not establish owner acceptance or deliverable completeness or
+correctness. An execution error, cancellation, and an empty result are distinct
+failed outcomes. Result status is not inferred from the response's prose.
 Root controllers do not expose or accept `retain`, including `retain: false`.
 Project-wide requirements are controlled by the Manager.
 
@@ -353,11 +358,60 @@ without a corresponding tool result. That absence does not itself prove that
 the tool is still running. `inspect_agent` remains the live terminal/process
 observation path. Transcript is read-only and does not change agent state.
 
+## `read_agent_responses`
+
+```json
+{ "result": "result:reviewer#1" }
+```
+
+```json
+{
+  "session": "01a182c3-208f-760a-85a6-cd808599f3e4",
+  "response": "a06f350f",
+  "offset": 0
+}
+```
+
+`read_agent_responses` recovers the visible assistant responses of a directly owned
+Agent from its saved Pi session, including after the Agent generation was cleaned up.
+It reads saved evidence only: it does not start an Agent, create an assignment, or make a
+model request. Managers and Chiefs retain this read-only operation when fresh
+delegation is disabled and no live Agents remain; each call still verifies direct
+ownership. Pass exactly one scope selector:
+
+- `result` is the exact semantic result ref shown in your own completion. Scope is that
+  one assignment: the responses persisted between its accepted request and its
+  selected final response. The listing marks the response the result delivered as
+  `selected`.
+- `session` is the exact saved Pi session path or full UUID returned with a result.
+  Scope is the whole session and is reported as `session`, never as an assignment;
+  later assignments continued in that session are included.
+
+Without `response` the call lists bounded summaries (id, index, timestamp, character
+count, preview) in chronological order, 20 per call; copy `next_offset` as `offset`
+for the next page. With `response` set to a listed id it returns that response's text
+in chunks of at most 12 KiB; copy `next_offset` as `offset` until it is absent. Offsets
+count characters, chunks never split one, and a chunk that ends before the response
+ends says so explicitly. Only visible assistant text is returned: thinking, tool
+calls, tool results, user messages, system and custom content are not.
+
+Authority is exact direct ownership proven by the caller's own persisted Agent
+results or delegation receipts. Foreign sessions, sessions owned only by a descendant,
+and results received as forwarded evidence grant no access. A forwarded result stays
+usable as `files` evidence but its recipient cannot browse the source session. The
+call fails closed when the saved file is unavailable, its recorded identity
+contradicts the ownership evidence, or an assignment boundary cannot be proven.
+Results delivered without recorded selected-response provenance cannot be scoped to
+an assignment; use `session` to browse the whole saved session instead.
+
+`read_agent_transcript` remains the separate diagnostic for a live or lost Agent's
+conversation and tool evidence.
+
 ## `files`
 
 `files` is valid on `delegate_agent`, `continue_agent`, `steer_agent`,
 `interrupt_agent`, and `reply_agent`; it is not valid on `list_agents`,
-`close_agent`, `inspect_agent`, or `read_agent_transcript`. It accepts
+`close_agent`, `inspect_agent`, `read_agent_transcript`, or `read_agent_responses`. It accepts
 ordinary paths,
 reusable direct-agent refs such as `result:researcher#1`, and canonical
 `result:<request-id>` refs already supplied as evidence. Semantic refs use the

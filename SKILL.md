@@ -75,6 +75,9 @@ managed-agent Pi session.
 Each managed agent exists for one assignment only. After its terminal result is
 delivered, Pi Herdsman cleans up that agent automatically. To continue completed
 work with its existing context, use the exact session returned with the result.
+`completed` reports execution completion with a selected non-empty visible
+response, not owner acceptance or verified deliverable completeness or
+correctness. Assess the result against the assignment.
 Agent labels control the currently live generation; they are not continuation
 selectors.
 Session continuation inherits the saved definition, cwd, and logical label;
@@ -92,7 +95,10 @@ these mutate
 live agent execution and are available only when listed. Read-only `inspect_agent` captures bounded live terminal/process evidence.
 `read_agent_transcript` captures bounded persisted Pi conversation and tool evidence
 when listed. Neither changes agent
-state. A completed agent does not remain available for another assignment.
+state. `read_agent_responses` recovers an owned Agent's visible assistant responses
+after cleanup, from a result ref (scoped to that assignment, with the delivered
+response marked `selected`) or from the exact saved session (session-wide), in
+bounded chunks; it never restarts an Agent or makes a model request. A completed agent does not remain available for another assignment.
 
 Use `steer_agent` only to change active work non-preemptively. Steering does not cancel
 an in-flight model or tool operation; Pi may queue it until the current
@@ -502,10 +508,10 @@ authorized Agent coordination, and an absent or empty list disables fresh
 delegation only, not management of existing owned work. A delegation-capable
 managed session remains an Agent at every depth.
 Every managed agent receives `ask_owner`. A non-empty effective `agents` list
-is necessary but not sufficient to enable the nine Agent ownership tools:
+is necessary but not sufficient to enable the ten Agent ownership tools:
 `list_agents`, `delegate_agent`, `continue_agent`, `steer_agent`,
-`interrupt_agent`, `reply_agent`, `close_agent`, `inspect_agent`, and
-`read_agent_transcript`. Delegation is disabled when `excludeTools` contains
+`interrupt_agent`, `reply_agent`, `close_agent`, `inspect_agent`,
+`read_agent_transcript`, and `read_agent_responses`. Delegation is disabled when `excludeTools` contains
 `agent`, when `noTools: true` unless explicit `tools` contains `agent`,
 or when `tools` is explicitly empty. Otherwise, omitted `tools` permits
 delegation and explicit ordinary tools permit it. An empty or omitted `agents`

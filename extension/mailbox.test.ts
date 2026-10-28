@@ -743,6 +743,24 @@ test("rejects unsafe IDs and invalid conditional results", () => {
   };
   writeResult(path, abortedResult);
   assert.deepEqual(readResult(path, state.runId), abortedResult);
+  for (const runtime of [
+    {},
+    { errorStatus: 99 },
+    { errorStatus: 600 },
+    { errorId: -2147483649 },
+    { errorId: 4294967296 },
+    { errorId: 1.5 },
+    { errorMessage: "secret" },
+  ]) {
+    assert.throws(
+      () =>
+        writeResult(path, {
+          ...abortedResult,
+          error: { ...abortedResult.error, runtime },
+        } as never),
+      /Invalid runtime failure details/,
+    );
+  }
   writeFileSync(
     join(path, "state.json"),
     JSON.stringify({
@@ -1296,4 +1314,43 @@ test("bootstrap sidecar round-trips atomically, rejects duplicates, and resets",
   );
   resetAgentMailbox(path);
   assert.equal(readAgentBootstrap(path), undefined);
+});
+test("results validate selected-response provenance only on completed results", () => {
+  const path = mkdtempSync(join(tmpdir(), "pi-herdsman-mailbox-test-"));
+  try {
+    const base = {
+      version: 5 as const,
+      runId: state.runId,
+      requestId: state.runId,
+      ownerSessionId: state.ownerSessionId,
+      workspaceId: state.workspaceId,
+      agentLabel: state.agentLabel,
+      paneId: state.paneId,
+      completedAt: Date.now(),
+    };
+    const completed = {
+      ...base,
+      status: "completed" as const,
+      text: "done",
+      responseEntryId: "a06f350f",
+    };
+    writeResult(path, completed);
+    assert.deepEqual(readResult(path, state.runId), completed);
+    for (const invalid of [
+      { ...completed, responseEntryId: "  " },
+      { ...completed, responseEntryId: 7 },
+      {
+        ...base,
+        status: "failed",
+        error: { code: "empty_result", message: "none" },
+        responseEntryId: "a06f350f",
+      },
+    ])
+      assert.throws(
+        () => writeResult(path, invalid as never),
+        /Invalid result response entry/,
+      );
+  } finally {
+    rmSync(path, { recursive: true, force: true });
+  }
 });

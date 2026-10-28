@@ -163,6 +163,7 @@ const agentTool = (pi: ReturnType<typeof fakePi>, name: string) =>
           close: "close_agent",
           inspect: "inspect_agent",
           transcript: "read_agent_transcript",
+          responses: "read_agent_responses",
         } as Record<string, string>
       )[name],
   )!;
@@ -8553,7 +8554,7 @@ test("assignment retains its request when acknowledgement never arrives", async 
   resetAgentMailbox(startup.mailbox);
 });
 
-test("registered lead exposes only explicit live controls", async () => {
+test("registered lead exposes semantic tools and guards live controls", async () => {
   setLeadEnvironment();
   process.env.HERDR_PANE_ID = "lead-pane";
   const label = "action-agent";
@@ -8608,6 +8609,7 @@ test("registered lead exposes only explicit live controls", async () => {
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -10335,4 +10337,327 @@ test("root assignments reject a generation owned by a different session", async 
     pi.calls.some((args) => args[0] === "agent" && args[1] === "start"),
     false,
   );
+});
+
+const REPORT = `Review report ${"é😀x".repeat(9000)} END-OF-REPORT`;
+function responseFixture(options: { missingProvenance?: boolean } = {}) {
+  const childId = randomUUID();
+  const path = join(testTmpRoot, `responses-${childId}.jsonl`);
+  realFs.writeFileSync(path, "{}", "utf8");
+  const first = randomUUID();
+  const second = randomUUID();
+  const marker = (id: string, requestId: string, parentId: string) => ({
+    type: "custom",
+    id,
+    parentId,
+    customType: "pi-herdsman-agent-required-evidence",
+    data: {
+      sessionId: childId,
+      requestId,
+      ownerSessionId: LEAD_SESSION_ID,
+    },
+  });
+  const reply = (id: string, parentId: string, text: string) => ({
+    type: "message",
+    id,
+    parentId,
+    timestamp: "2026-10-28T13:48:41.000Z",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "PRIVATE REASONING" },
+        { type: "text", text },
+        { type: "toolCall", id: "c", name: "read", arguments: {} },
+      ],
+    },
+  });
+  const session = {
+    id: childId,
+    path,
+    cwd: "/tmp",
+    entries: [
+      {
+        type: "custom",
+        id: "e0",
+        parentId: null,
+        customType: "pi-herdsman-agent-definition",
+        data: { sessionId: childId, definition: "reviewer", label: "reviewer" },
+      },
+      marker("m1", first, "e0"),
+      {
+        type: "message",
+        id: "u1",
+        parentId: "m1",
+        message: { role: "user", content: "USER HISTORY" },
+      },
+      reply("a1", "u1", REPORT),
+      reply("a2", "a1", "Addendum to the report"),
+      marker("m2", second, "a2"),
+      reply("a3", "m2", "Second assignment answer"),
+    ],
+  };
+  nativeSessions.set(childId, session);
+  const result = (requestId: string, index: number, selected: string) => {
+    const entry = ownershipResult(childId, LEAD_SESSION_ID, {
+      path,
+      label: "reviewer",
+      definition: "reviewer",
+    });
+    Object.assign(entry.details, {
+      requestId,
+      resultIndex: index,
+      resultRef: `result:${requestId}`,
+      ...(options.missingProvenance ? {} : { responseEntryId: selected }),
+    });
+    return entry;
+  };
+  return {
+    childId,
+    path,
+    session,
+    entries: [result(first, 1, "a2"), result(second, 2, "a3")],
+  };
+}
+async function recover(entries: unknown[], params: Record<string, unknown>) {
+  setLeadEnvironment();
+  const pi = fakePi({ exec: () => ({ stdout: "{}", stderr: "", code: 0 }) });
+  registerExtension!(pi.pi as never);
+  const result = await agentTool(pi, "responses").execute(
+    "id",
+    params,
+    undefined,
+    undefined,
+    fakeContext(entries),
+  );
+  return result.details as any;
+}
+
+test("read_agent_responses recovers whole-session responses in bounded Unicode-safe chunks", async () => {
+  const fixture = responseFixture();
+  try {
+    const listing = await recover(fixture.entries, {
+      session: fixture.childId,
+    });
+    assert.equal(listing.scope, "session");
+    assert.deepEqual(
+      listing.responses.map((item: any) => item.id),
+      ["a1", "a2", "a3"],
+    );
+    assert.equal(listing.selected_response, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(listing),
+      /PRIVATE REASONING|USER HISTORY/,
+    );
+    let text = "";
+    let offset = 0;
+    for (;;) {
+      const chunk = await recover(fixture.entries, {
+        session: fixture.childId,
+        response: "a1",
+        offset,
+      });
+      assert.ok(Buffer.byteLength(chunk.text, "utf8") <= 12 * 1024);
+      assert.doesNotMatch(chunk.text, /\uFFFD|PRIVATE REASONING/u);
+      text += chunk.text;
+      if (chunk.next_offset === undefined) break;
+      assert.ok(chunk.next_offset > offset);
+      offset = chunk.next_offset;
+    }
+    assert.equal(text, REPORT);
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses result scope isolates assignments despite reused labels", async () => {
+  const fixture = responseFixture();
+  try {
+    const first = await recover(fixture.entries, {
+      result: "result:reviewer#1",
+    });
+    assert.equal(first.scope, "assignment");
+    assert.equal(first.selected_response, "a2");
+    assert.deepEqual(
+      first.responses.map((item: any) => [item.id, item.selected === true]),
+      [
+        ["a1", false],
+        ["a2", true],
+      ],
+    );
+    const second = await recover(fixture.entries, {
+      result: "result:reviewer#2",
+    });
+    assert.deepEqual(
+      second.responses.map((item: any) => item.id),
+      ["a3"],
+    );
+    const outside = await recover(fixture.entries, {
+      result: "result:reviewer#1",
+      response: "a3",
+    });
+    assert.equal(outside.ok, false);
+    assert.equal(outside.error.category, "target_not_found");
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses grants no authority to foreign, imported, or non-direct sessions", async () => {
+  const fixture = responseFixture();
+  try {
+    const foreign = fixture.entries.map((entry: any) => ({
+      ...entry,
+      details: { ...entry.details, ownerSessionId: randomUUID() },
+    }));
+    for (const params of [
+      { session: fixture.childId },
+      { result: "result:reviewer#1" },
+    ]) {
+      const denied = await recover(foreign, params);
+      assert.equal(denied.ok, false);
+      assert.equal(denied.error.category, "target_not_found");
+    }
+    const imported = await recover(
+      [
+        {
+          type: "custom",
+          customType: "pi-herdsman-result-ref",
+          data: {
+            ref: "result:reviewer#1",
+            canonicalRef: `result:${fixture.entries[0].details.requestId}`,
+          },
+        },
+      ],
+      { result: "result:reviewer#1" },
+    );
+    assert.equal(imported.error.category, "target_not_found");
+    const both = await recover(fixture.entries, {
+      session: fixture.childId,
+      result: "result:reviewer#1",
+    });
+    assert.equal(both.error.category, "invalid_request");
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses fails closed on contradictory, missing, and unproven evidence", async () => {
+  const fixture = responseFixture();
+  try {
+    (fixture.session.entries[0] as any).data.label = "someone-else";
+    let failure = await recover(fixture.entries, { session: fixture.childId });
+    assert.equal(failure.error.category, "target_ambiguous");
+    (fixture.session.entries[0] as any).data.label = "reviewer";
+    realFs.rmSync(fixture.path);
+    failure = await recover(fixture.entries, { session: fixture.childId });
+    assert.equal(failure.error.category, "target_not_found");
+    assert.match(failure.error.message, /unavailable/);
+    realFs.writeFileSync(fixture.path, "{}", "utf8");
+    const broken = fixture.entries.map((entry: any, index: number) =>
+      index
+        ? entry
+        : { ...entry, details: { ...entry.details, responseEntryId: "a3" } },
+    );
+    failure = await recover(broken, { result: "result:reviewer#1" });
+    assert.equal(failure.error.category, "target_ambiguous");
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses explains session scope for results without provenance", async () => {
+  const fixture = responseFixture({ missingProvenance: true });
+  try {
+    const failure = await recover(fixture.entries, {
+      result: "result:reviewer#1",
+    });
+    assert.equal(failure.ok, false);
+    assert.match(failure.error.message, /assignment boundary cannot be proven/);
+    assert.match(failure.error.nextAction, new RegExp(fixture.childId));
+    assert.match(failure.error.nextAction, /session-wide/);
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses pages summaries without gaps and rejects out-of-range offsets", async () => {
+  const fixture = responseFixture();
+  try {
+    for (let index = 0; index < 43; index++)
+      fixture.session.entries.push({
+        type: "message",
+        id: `extra-${index}`,
+        parentId: index ? `extra-${index - 1}` : "a3",
+        message: { role: "assistant", content: `Response ${index}` },
+      });
+    const ids: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await recover(fixture.entries, {
+        session: fixture.path,
+        offset,
+      });
+      assert.equal(page.ok, true);
+      assert.equal(page.scope, "session");
+      assert.equal(page.total_responses, 46);
+      assert.ok(page.responses.length <= 20);
+      ids.push(
+        ...page.responses.map((response: { id: string }) => response.id),
+      );
+      if (page.next_offset === undefined) break;
+      assert.ok(page.next_offset > offset);
+      offset = page.next_offset;
+    }
+    assert.deepEqual(ids, [
+      "a1",
+      "a2",
+      "a3",
+      ...Array.from({ length: 43 }, (_, index) => `extra-${index}`),
+    ]);
+    for (const params of [
+      { offset: 46 },
+      { response: "a2", offset: "Addendum to the report".length },
+      { offset: -1 },
+      { offset: 1.5 },
+    ]) {
+      const invalid = await recover(fixture.entries, {
+        session: fixture.childId,
+        ...params,
+      });
+      assert.equal(invalid.error.category, "invalid_request");
+    }
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
+});
+
+test("read_agent_responses rejects malformed persisted assignment marker data", async () => {
+  const fixture = responseFixture();
+  try {
+    const boundary = fixture.session.entries.find((entry) => entry.id === "m1");
+    assert.ok(boundary);
+    const valid = boundary.data;
+    assert.ok(valid);
+    for (const data of [
+      null,
+      [],
+      "invalid",
+      {},
+      { ...valid, ownerSessionId: randomUUID() },
+    ]) {
+      Object.assign(boundary, { data });
+      const denied = await recover(fixture.entries, {
+        result: "result:reviewer#1",
+      });
+      assert.equal(denied.error.category, "target_ambiguous");
+    }
+    Object.assign(boundary, { data: valid });
+    const recovered = await recover(fixture.entries, {
+      result: "result:reviewer#1",
+    });
+    assert.equal(recovered.scope, "assignment");
+    assert.equal(recovered.selected_response, "a2");
+  } finally {
+    nativeSessions.delete(fixture.childId);
+  }
 });

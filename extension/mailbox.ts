@@ -127,6 +127,8 @@ export interface ResultRecord {
   paneId: string;
   status: "completed" | "failed";
   text?: string;
+  /** Persisted Pi entry ID of the selected final assistant response. */
+  responseEntryId?: string;
   error?: {
     code:
       | "empty_result"
@@ -135,6 +137,10 @@ export interface ResultRecord {
       | "write_failure"
       | "aborted";
     message: string;
+    runtime?: {
+      errorStatus?: number;
+      errorId?: number;
+    };
   };
   contextUsage?: {
     tokens: number | null;
@@ -470,6 +476,7 @@ function validate(
               "paneId",
               "status",
               "text",
+              "responseEntryId",
               "error",
               "contextUsage",
               "completedAt",
@@ -787,15 +794,45 @@ function validate(
       ];
       if (
         !error ||
-        Object.keys(error).some((key) => !["code", "message"].includes(key)) ||
+        Object.keys(error).some(
+          (key) => !["code", "message", "runtime"].includes(key),
+        ) ||
         !codes.includes(error.code as string) ||
         typeof error.message !== "string" ||
         !error.message.trim()
       )
         throw new Error("Invalid failed result");
+      if (error.runtime !== undefined) {
+        const runtime = error.runtime as Record<string, unknown>;
+        if (
+          !runtime ||
+          typeof runtime !== "object" ||
+          Array.isArray(runtime) ||
+          Object.keys(runtime).length === 0 ||
+          Object.keys(runtime).some(
+            (key) => !["errorStatus", "errorId"].includes(key),
+          ) ||
+          (runtime.errorStatus !== undefined &&
+            (!Number.isInteger(runtime.errorStatus) ||
+              (runtime.errorStatus as number) < 100 ||
+              (runtime.errorStatus as number) > 599)) ||
+          (runtime.errorId !== undefined &&
+            (!Number.isInteger(runtime.errorId) ||
+              (runtime.errorId as number) < -2147483648 ||
+              (runtime.errorId as number) > 4294967295))
+        )
+          throw new Error("Invalid runtime failure details");
+      }
       if (v.text !== undefined)
         throw new Error("Failed result cannot contain text");
     }
+    if (
+      v.responseEntryId !== undefined &&
+      (v.status !== "completed" ||
+        typeof v.responseEntryId !== "string" ||
+        !v.responseEntryId.trim())
+    )
+      throw new Error("Invalid result response entry");
     if (v.contextUsage !== undefined) {
       const usage = v.contextUsage as Record<string, unknown>;
       if (

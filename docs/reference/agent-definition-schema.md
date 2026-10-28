@@ -309,10 +309,10 @@ A managed agent must have a non-empty effective `agents` list to be
 delegation-enabled. That condition is necessary but not sufficient: delegation
 is disabled when `excludeTools` contains `agent`, when `noTools: true` unless
 the explicit `tools` list contains `agent`, or when `tools` is explicitly
-empty. Otherwise, a non-empty `agents` list enables all nine coordination
+empty. Otherwise, a non-empty `agents` list enables all ten coordination
 tools: `list_agents`, `delegate_agent`, `continue_agent`, `steer_agent`,
-`interrupt_agent`, `reply_agent`, `close_agent`, `inspect_agent`, and
-`read_agent_transcript`. Thus omitted `tools` permits delegation, and explicit
+`interrupt_agent`, `reply_agent`, `close_agent`, `inspect_agent`,
+`read_agent_transcript`, and `read_agent_responses`. Thus omitted `tools` permits delegation, and explicit
 ordinary tools permit it unless one of those opt-outs applies. An omitted or
 empty `agents` list always makes the agent a leaf. Every managed agent receives
 `ask_owner`.
@@ -456,7 +456,7 @@ Additional local review instructions.
 ```
 
 Because `agents` is non-empty, and none of the delegation opt-outs apply, this
-managed agent receives all nine coordination tools and `ask_owner`, in
+managed agent receives all ten coordination tools and `ask_owner`, in
 addition to the explicitly selected ordinary tools.
 
 To disable a bundled role without copying its definition, use a minimal global

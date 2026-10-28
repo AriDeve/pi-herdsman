@@ -2787,7 +2787,9 @@ export function registerLeadRuntime(
       ? ["list_agents", "delegate_agent", "continue_agent"]
       : [];
     const management = ownedAgentManagementTools(ctx);
-    return [...new Set([...discovery, ...management])];
+    // Reading saved evidence does not require permission to start new work.
+    // The response operation verifies durable direct ownership on every call.
+    return [...new Set(["read_agent_responses", ...discovery, ...management])];
   };
   const supervisoryTools = (
     ctx: ExtensionContext,

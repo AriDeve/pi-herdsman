@@ -95,6 +95,7 @@ in `AGENTS.md`.
 - `extension/agent-definitions.ts`: Agent-definition discovery, validation, overrides, and launch arguments.
 - `extension/herdr.ts`: Herdr topology, startup, shutdown, and process ownership.
 - `extension/mailbox.ts`: Durable mailbox protocol and record persistence.
+- `extension/response-recovery.ts`: Pure visible-response extraction, assignment-boundary chains, and bounded chunking for `read_agent_responses`.
 - `extension/core.ts`: Shared lifecycle and message-preparation logic.
 - `extension/errors.ts`: Structured extension error categories.
 - `extension/lock.ts`: Process-lock ownership.

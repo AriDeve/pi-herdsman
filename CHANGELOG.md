@@ -14,6 +14,9 @@
 - Trace ask creation, idle deferral, input inclusion, delivery failures, and correlated replies through content-free session diagnostics.
 - Exercise provider-visible schemas and indirect MCP execution over OMP's native HTTP/SSE and stdio boundaries, including forbidden-target rejection.
 - Configure ordinary Agents with `fastMode: true` or `false`, including through the Definitions UI; apply native OMP tier policy on fresh and continued launches and warn the owner when priority is unavailable.
+- Recover visible Agent responses after automatic cleanup through `read_agent_responses`, with direct-owner authorization, exact session or assignment-result scope, bounded summaries, and complete Unicode-safe response chunks.
+- Preserve selected-response provenance so an earlier report remains recoverable when a later addendum is delivered, without restarting the Agent or mixing subsequent assignments into the result's scope.
+- Distinguish execution completion from owner acceptance in result delivery and preserve validated numeric runtime failure details without exposing arbitrary upstream error messages.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

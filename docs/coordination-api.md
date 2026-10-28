@@ -21,6 +21,7 @@ reply_agent
 close_agent
 inspect_agent
 read_agent_transcript
+read_agent_responses
 ```
 
 Managed Agents contact their exact direct owner through

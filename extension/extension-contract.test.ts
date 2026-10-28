@@ -255,6 +255,7 @@ const REGISTERED_ROLE_TOOLS = [
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -318,6 +319,12 @@ const SEMANTIC_TOOL_CASES = [
     { agent: "worker" },
     { agent: "worker", session: "x" },
     ["agent"],
+  ],
+  [
+    "read_agent_responses",
+    { session: "11111111-1111-4111-8111-111111111111", offset: 0 },
+    { session: "11111111-1111-4111-8111-111111111111", agent: "x" },
+    [],
   ],
   [
     "message_supervisor",
@@ -422,6 +429,7 @@ test("semantic coordination tools expose exact strict object contracts", () => {
     close_agent: "close agent",
     inspect_agent: "inspect agent",
     read_agent_transcript: "read agent transcript",
+    read_agent_responses: "read agent responses",
     message_supervisor: "message supervisor",
     list_peers: "list peers",
     message_peer: "message peer",
@@ -643,6 +651,7 @@ test("Chief activation exposes only semantic staff tools", async () => {
       "inspect_staff",
       "read_staff_transcript",
       "message_staff",
+      "read_agent_responses",
     ]);
     const tools = new Map(chief.tools.map((tool) => [tool.name, tool]));
     for (const [name, valid, invalid, required] of STAFF_TOOL_CASES) {
@@ -819,6 +828,7 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
       "reply_agent",
       "steer_agent",
       "read_agent_transcript",
+      "read_agent_responses",
       "message_supervisor",
       "list_peers",
       "message_peer",
@@ -987,6 +997,7 @@ test("managed agents receive no peer tool and Chiefs expose only staff actively"
       "inspect_staff",
       "read_staff_transcript",
       "message_staff",
+      "read_agent_responses",
     ]);
     assert.equal(
       chief.pi.getActiveTools().some((name) => name.startsWith("peer_")),
@@ -2075,6 +2086,7 @@ test("active chief describes authoritative remote ask projection", async () => {
     "inspect_staff",
     "read_staff_transcript",
     "message_staff",
+    "read_agent_responses",
   ]);
   const snapshotsBeforePreparation = pi.calls.filter(isApiSnapshot).length;
   const beforeStart = await pi.events.get("before_agent_start")![0](
@@ -3609,6 +3621,7 @@ test("persisted Chief keeps verified authority and mandatory tools when definiti
       "inspect_staff",
       "read_staff_transcript",
       "message_staff",
+      "read_agent_responses",
     ]);
     assert.equal(
       entries.some(

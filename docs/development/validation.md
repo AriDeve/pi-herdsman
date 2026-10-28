@@ -21,6 +21,12 @@ forbidden provider schemas after startup policy selection. These checks use
 temporary state, not an external model API; they do not establish real-model
 instruction adherence or external Codex Lite conversion behavior.
 `npm run package:audit` checks the bundled native entry point and packaged skills.
+`bun scripts/omp-response-recovery-check.ts` (after `npm run build`) runs real
+OMP and Herdsman in an owned, named Herdr session against a scripted loopback
+provider. A managed Agent produces a full report and a later addendum; the check
+verifies result delivery, automatic cleanup, post-cleanup `read_agent_responses`
+recovery of both responses, session continuation for a second assignment, and
+assignment isolation, with no further child model request during recovery.
 The upstream Pi smoke scripts remain Pi-targeted; OMP delegation requires a
 separate named Herdr session with OMP's integration loaded.
 

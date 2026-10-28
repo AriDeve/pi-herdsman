@@ -93,6 +93,13 @@ from execution failure. These results do not by themselves close the assignment
 or release its ownership; inspect the exact assignment, child work, and durable
 result before deciding what to do next.
 
+For execution errors and cancellation, the result carries the runtime's numeric
+`errorStatus` (100–599) and `errorId` (a signed or unsigned 32-bit integer)
+when exposed and valid. Missing fields are unavailable, not inferred. The
+owner receives the normalized Herdsman category and message; arbitrary upstream
+error messages are excluded because they may contain sensitive data. A refusal
+normalized upstream into an ordinary completion cannot be recovered from prose.
+
 Assigned Lead failures are reported to the Manager through the existing project
 message path. A failure received while the Manager is absent remains a project
 message; when the exact current Manager returns idle, an unreceived execution
@@ -235,6 +242,15 @@ than being destructively guessed away.
 For lead-only human emergency cleanup, `/agents stop` operates on the proven
 owned tree and reports discarded active work or durable pending results. It is
 not the normal model orchestration interface.
+
+## Recovering an earlier response
+
+After an Agent is cleaned up, its label no longer addresses it, but its saved
+session remains. The direct owner recovers visible assistant responses with
+`read_agent_responses`: pass the result ref for one assignment's responses, or the
+exact session for the whole session when the result carries no assignment
+provenance. Recovery reads saved evidence only and makes no model request. See
+[Agent tools](../reference/agent.md#read_agent_responses).
 
 ## Historical session failure
 

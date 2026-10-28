@@ -804,6 +804,7 @@ const leadTools = [
   "close_agent",
   "inspect_agent",
   "read_agent_transcript",
+  "read_agent_responses",
   "message_supervisor",
   "list_peers",
   "message_peer",
@@ -820,12 +821,14 @@ const managerTools = [
   "resume_project",
   "stop_lead",
   "remove_worktree",
+  "read_agent_responses",
 ];
 const chiefTools = [
   "list_staff",
   "inspect_staff",
   "read_staff_transcript",
   "message_staff",
+  "read_agent_responses",
 ];
 
 test("Lead execution state is strict and profile tools preserve only Lead capabilities", () => {
@@ -2787,6 +2790,7 @@ function fakeChiefPi(options: Parameters<typeof fakePi>[0] = {}) {
           "close_agent",
           "inspect_agent",
           "read_agent_transcript",
+          "read_agent_responses",
           "message_supervisor",
           "list_peers",
           "message_peer",
@@ -8401,12 +8405,7 @@ test("Chief shutdown releases its lease when ordinary tool restoration fails", a
 
   await pi.events.get("session_shutdown")![0]();
 
-  assert.deepEqual(pi.pi.getActiveTools(), [
-    "list_staff",
-    "inspect_staff",
-    "read_staff_transcript",
-    "message_staff",
-  ]);
+  assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
   assert.ok(
     entries.some(
       (entry: any) =>
@@ -8678,12 +8677,7 @@ test("selecting a historical Chief branch activates its lease and staff tools", 
     ];
     context.sessionManager.getBranch = () => chiefBranch;
     await pi.events.get("session_tree")![0](undefined, context);
-    assert.deepEqual(pi.pi.getActiveTools(), [
-      "list_staff",
-      "inspect_staff",
-      "read_staff_transcript",
-      "message_staff",
-    ]);
+    assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
     assert.equal(readPeerLeadRecord(peerRuntime(), sessionId), undefined);
     assert.throws(() =>
       claimChiefLease({
@@ -8797,7 +8791,9 @@ test("manual chief leave completes lead cleanup when tool restoration fails", as
   assert.deepEqual(pi.pi.getActiveTools(), restoredLeadTools);
   assert.ok(leadTools.every((name) => restoredLeadTools.includes(name)));
   assert.equal(
-    chiefTools.some((name) => restoredLeadTools.includes(name)),
+    chiefTools.some(
+      (name) => !leadTools.includes(name) && restoredLeadTools.includes(name),
+    ),
     false,
   );
   assert.deepEqual(
@@ -8855,6 +8851,7 @@ test("lead session-start retries an exact baseline after restoration fails", asy
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -8883,7 +8880,10 @@ test("lead session-start retries an exact baseline after restoration fails", asy
   await start(undefined, context);
 
   assert.equal(
-    chiefTools.some((name) => pi.pi.getActiveTools().includes(name)),
+    chiefTools.some(
+      (name) =>
+        !leadTools.includes(name) && pi.pi.getActiveTools().includes(name),
+    ),
     false,
   );
   assert.ok(
@@ -8931,6 +8931,7 @@ test("lead session-start continues when chief lease release fails", async () => 
         "close_agent",
         "inspect_agent",
         "read_agent_transcript",
+        "read_agent_responses",
         "message_supervisor",
         "list_peers",
         "message_peer",
@@ -8956,6 +8957,7 @@ test("lead session-start continues when chief lease release fails", async () => 
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -9200,6 +9202,22 @@ test("Chief profile drives the turn-start tools, prompt, and tool-call guard", a
         },
       );
     resetAgentMailbox(ownerMailbox);
+    await pi.events.get("before_agent_start")![0](event, ctx);
+    assert.ok(
+      pi.pi.getActiveTools().includes("read_agent_responses"),
+      "cleaning up the last child must not remove historical response recovery",
+    );
+    assert.ok(!pi.pi.getActiveTools().includes("delegate_agent"));
+    assert.equal(
+      await pi.events.get("tool_call")![0](
+        {
+          toolName: "read_agent_responses",
+          input: { session: LEAD_SESSION_ID },
+        },
+        ctx,
+      ),
+      undefined,
+    );
     await pi.events.get("session_shutdown")?.[0](undefined, ctx);
   } finally {
     resetAgentMailbox(ownerMailbox);
@@ -9908,6 +9926,7 @@ test("Lead resume repairs stale staff from its durable displaced loadout", async
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -9922,12 +9941,7 @@ test("Lead resume repairs stale staff from its durable displaced loadout", async
   registerExtension!(pi.pi as never);
   await pi.events.get("session_start")![0](undefined, context);
   await pi.commandOptions.get("chief").handler("", context);
-  assert.deepEqual(pi.pi.getActiveTools(), [
-    "list_staff",
-    "inspect_staff",
-    "read_staff_transcript",
-    "message_staff",
-  ]);
+  assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
 
   await pi.commandOptions.get("chief").handler("leave", context);
   assert.deepEqual(pi.pi.getActiveTools(), [
@@ -9988,6 +10002,7 @@ test("ordinary branch tool state wins over an older lead checkpoint", async () =
           "close_agent",
           "inspect_agent",
           "read_agent_transcript",
+          "read_agent_responses",
           "message_supervisor",
           "list_peers",
           "message_peer",
@@ -10007,6 +10022,7 @@ test("ordinary branch tool state wins over an older lead checkpoint", async () =
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -10383,6 +10399,7 @@ test("persisted chief resume isolates tools and restores its ordinary baseline",
           "close_agent",
           "inspect_agent",
           "read_agent_transcript",
+          "read_agent_responses",
           "message_supervisor",
           "list_peers",
           "message_peer",
@@ -10408,12 +10425,7 @@ test("persisted chief resume isolates tools and restores its ordinary baseline",
   registerExtension!(pi.pi as never);
   const context = fakeContext(entries) as any;
   await pi.events.get("session_start")![0](undefined, context);
-  assert.deepEqual(pi.pi.getActiveTools(), [
-    "list_staff",
-    "inspect_staff",
-    "read_staff_transcript",
-    "message_staff",
-  ]);
+  assert.deepEqual(pi.pi.getActiveTools(), chiefTools);
   await pi.commandOptions.get("chief").handler("leave", context);
   assert.deepEqual(pi.pi.getActiveTools(), [
     "read",
@@ -10428,6 +10440,7 @@ test("persisted chief resume isolates tools and restores its ordinary baseline",
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",
@@ -10475,6 +10488,7 @@ test("persisted chief collision is suspended and has no lead authority", async (
           "close_agent",
           "inspect_agent",
           "read_agent_transcript",
+          "read_agent_responses",
           "message_supervisor",
         ],
       },
@@ -10504,6 +10518,7 @@ test("persisted chief collision is suspended and has no lead authority", async (
         "close_agent",
         "inspect_agent",
         "read_agent_transcript",
+        "read_agent_responses",
         "message_supervisor",
       ],
     });

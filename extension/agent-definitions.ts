@@ -165,6 +165,7 @@ export const AGENT_COORDINATION_TOOLS = [
   "close_agent",
   "inspect_agent",
   "read_agent_transcript",
+  "read_agent_responses",
 ] as const;
 
 function markdownFiles(root: string): string[] {

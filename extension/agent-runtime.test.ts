@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { mock, test } from "node:test";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -1130,6 +1131,11 @@ test("registered agent writes state, handles input, and settles one result", asy
   const result = readResult(mailbox, request.requestId);
   assert.equal(result?.status, "completed");
   assert.equal(result?.text, "done");
+  assert.equal(
+    typeof result?.responseEntryId,
+    "string",
+    "completed results persist the selected response entry",
+  );
   assert.equal(readAgentState(mailbox)?.completedRequestId, request.requestId);
   assert.equal(readAgentState(mailbox)?.lastActivityAt, undefined);
 });
@@ -1137,7 +1143,7 @@ test("registered agent writes state, handles input, and settles one result", asy
 test("terminal Pi execution error discards partial text as an execution failure", async () => {
   const mailbox = setAgentEnvironment("execution-error-agent");
   const agent = fakePi();
-  const context = fakeContext();
+  const context = fakeAgentContext();
   registerExtension!(agent.pi as never);
   agent.events.get("session_start")![0](undefined, context);
   await new Promise((resolve) => setImmediate(resolve));
@@ -1162,6 +1168,9 @@ test("terminal Pi execution error discards partial text as an execution failure"
   const failedMessage = {
     role: "assistant",
     content: "partial output before provider failure",
+    errorStatus: 503,
+    errorId: 42,
+    errorMessage: "PRIVATE_SYNTHETIC_SECRET",
   };
   agent.events.get("message_end")![0]({ message: failedMessage }, context);
   emitAgentTurn(agent, context, failedMessage, "error");
@@ -1172,11 +1181,148 @@ test("terminal Pi execution error discards partial text as an execution failure"
   assert.deepEqual(result?.error, {
     code: "execution_error",
     message: "Agent model execution failed",
+    runtime: { errorStatus: 503, errorId: 42 },
   });
   assert.equal(result?.text, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SYNTHETIC_SECRET/);
   assert.equal(readAgentState(mailbox)?.completedRequestId, request.requestId);
+  const settledState = readAgentState(mailbox)!;
   agent.events.get("session_shutdown")?.[0]();
-  resetAgentMailbox(mailbox);
+  for (const key of [
+    "PI_HERDSMAN_MAILBOX",
+    "PI_HERDSMAN_RUN_ID",
+    "PI_HERDSMAN_OWNER_SESSION_ID",
+    "PI_HERDSMAN_OWNER_DISPLAY",
+    "PI_HERDSMAN_LABEL",
+    "PI_HERDSMAN_WORKSPACE_ID",
+    "PI_HERDSMAN_AGENT_DEFINITION",
+    "HERDR_PANE_ID",
+  ])
+    delete process.env[key];
+  process.env.PI_HERDSMAN_AGENT_DEFINITION = "parent";
+  const activeChild = {
+    ...settledState,
+    activeRequestId: request.requestId,
+    completedRequestId: undefined,
+  };
+  writeAgentState(mailbox, activeChild);
+  const parent = {
+    ...managedState("delivery-parent"),
+    piSessionId: LEAD_SESSION_ID,
+  };
+  const owner = fakePi({
+    exec: agentControllerExecutor(parent, [activeChild]),
+  });
+  registerExtension!(owner.pi as never);
+  try {
+    for (const handler of owner.events.get("session_start") ?? [])
+      await handler(undefined, fakeContext());
+    writeAgentState(mailbox, settledState);
+    emitMailboxChange(mailbox, `result-${request.requestId}.json`);
+    await nextTurn();
+    await nextTurn();
+    const delivered = owner.sentMessageCalls.find(
+      ({ message }) =>
+        typeof message === "object" &&
+        message !== null &&
+        "customType" in message &&
+        message.customType === "pi-herdsman-agent-result",
+    )?.message;
+    assert.ok(delivered && "details" in delivered && "content" in delivered);
+    const details = delivered.details as { error?: ResultRecord["error"] };
+    assert.equal(typeof delivered.content, "string");
+    assert.deepEqual(details.error, result?.error);
+    assert.match(delivered.content, /errorStatus=503; errorId=42/);
+    assert.doesNotMatch(JSON.stringify(delivered), /PRIVATE_SYNTHETIC_SECRET/);
+  } finally {
+    for (const handler of owner.events.get("session_shutdown") ?? []) handler();
+    resetAgentMailbox(mailbox);
+  }
+});
+
+test("settlement distinguishes execution outcomes without interpreting response prose", async () => {
+  const scenarios = [
+    {
+      outcome: "completed",
+      content: "I cannot complete this work.",
+      expected: "completed",
+    },
+    { outcome: "completed", content: "   ", expected: "empty_result" },
+    {
+      outcome: "error",
+      content: "partial",
+      expected: "execution_error",
+      errorStatus: 600,
+      errorId: 4294967296,
+    },
+    {
+      outcome: "aborted",
+      content: "partial",
+      expected: "aborted",
+      errorStatus: 499,
+      errorId: 42,
+    },
+  ] as const;
+  for (const scenario of scenarios) {
+    const mailbox = setAgentEnvironment("outcome-boundary");
+    const agent = fakePi();
+    const context = fakeContext();
+    registerExtension!(agent.pi as never);
+    agent.events.get("session_start")![0](undefined, context);
+    await nextTurn();
+    const state = readAgentState(mailbox)!;
+    const request: RequestRecord = {
+      version: 5,
+      runId: state.runId,
+      requestId: randomUUID(),
+      ownerSessionId: state.ownerSessionId,
+      workspaceId: state.workspaceId,
+      agentLabel: state.agentLabel,
+      paneId: state.paneId,
+      kind: "task",
+      text: "work",
+      createdAt: Date.now(),
+    };
+    try {
+      writeRequest(mailbox, request);
+      agent.events.get("input")![0](
+        { text: controlMarker(request.requestId) },
+        context,
+      );
+      emitAgentTurn(agent, context, {
+        role: "assistant",
+        content: "earlier response",
+      });
+      const message = { role: "assistant", ...scenario };
+      emitAgentTurn(agent, context, message, scenario.outcome);
+      agent.events.get("agent_before_settle")![0](
+        { outcome: scenario.outcome },
+        context,
+      );
+      await agent.events.get("agent_settled")![0](
+        { aborted: scenario.outcome === "aborted" },
+        context,
+      );
+      const result = readResult(mailbox, request.requestId)!;
+      if (scenario.expected === "completed") {
+        assert.equal(result.status, "completed");
+        assert.equal(result.text, scenario.content);
+      } else {
+        assert.equal(result.status, "failed");
+        assert.equal(result.error?.code, scenario.expected);
+        assert.equal(result.text, undefined);
+        assert.deepEqual(
+          result.error?.runtime,
+          scenario.expected === "aborted"
+            ? { errorStatus: 499, errorId: 42 }
+            : undefined,
+        );
+      }
+    } finally {
+      agent.events.get("session_shutdown")?.[0]();
+      resetAgentMailbox(mailbox);
+    }
+  }
 });
 
 test("a completed retry supersedes an earlier Pi error candidate", async () => {
@@ -2525,6 +2671,7 @@ test("parent settlement waits for agent delivery and ignores result cleanup lag"
         paneId: child.paneId,
         status: "completed",
         text,
+        responseEntryId: `entry-${text}`,
         completedAt: Date.now(),
       });
       emitMailboxChange(mailbox, `result-${requestId}.json`);
@@ -2628,6 +2775,12 @@ test("parent settlement waits for agent delivery and ignores result cleanup lag"
       sentContent(1),
       new RegExp(`Result ref: result:researcher#${secondResultIndex}`),
     );
+    assert.equal(
+      (pi.sentMessageCalls[1].message as any).details.responseEntryId,
+      "entry-two",
+      "selected-response provenance survives owner delivery",
+    );
+    assert.match(sentContent(1), /read_agent_responses recovers/);
     assert.equal(
       (pi.sentMessageCalls[1].message as any).details.activeDirectChildCount,
       1,
@@ -3971,6 +4124,7 @@ test("a stray agent variable does not suppress the active Lead tool surface", as
     "close_agent",
     "inspect_agent",
     "read_agent_transcript",
+    "read_agent_responses",
     "message_supervisor",
     "list_peers",
     "message_peer",

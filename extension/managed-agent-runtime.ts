@@ -580,6 +580,7 @@ export function createManagedAgentExecutionState() {
           outcome?: "completed" | "aborted" | "error";
           responseEntryId?: string;
           responseText?: string;
+          runtimeError?: { errorStatus?: number; errorId?: number };
         }
       | undefined,
     pendingResult: undefined as ResultRecord | undefined,
@@ -1767,6 +1768,22 @@ export function registerManagedAgentActivityHandlers(
           event.message.content,
           "",
         ).trim();
+        const { errorStatus, errorId } = event.message;
+        observation.runtimeError =
+          event.outcome === "error" || event.outcome === "aborted"
+            ? {
+                ...(Number.isInteger(errorStatus) &&
+                errorStatus >= 100 &&
+                errorStatus <= 599
+                  ? { errorStatus }
+                  : {}),
+                ...(Number.isInteger(errorId) &&
+                errorId >= -2147483648 &&
+                errorId <= 4294967295
+                  ? { errorId }
+                  : {}),
+              }
+            : undefined;
       }
     }
     const usage = ctx.getContextUsage();
@@ -1952,7 +1969,7 @@ export function registerManagedAgentSettlementHandlers(
       paneId: state.paneId,
       status: completed ? "completed" : "failed",
       ...(completed
-        ? { text: responseText }
+        ? { text: responseText, responseEntryId: observation!.responseEntryId }
         : {
             error: {
               code: aborted
@@ -1965,6 +1982,11 @@ export function registerManagedAgentSettlementHandlers(
                 : outcome === "error"
                   ? "Agent model execution failed"
                   : "Agent produced no assistant text",
+              ...((aborted ? outcome === "aborted" : outcome === "error") &&
+              observation?.runtimeError &&
+              Object.keys(observation.runtimeError).length
+                ? { runtime: observation.runtimeError }
+                : {}),
             },
           }),
       contextUsage: ctx.getContextUsage(),
@@ -2010,6 +2032,7 @@ export function registerManagedAgentSettlementHandlers(
             ...current,
             status: "failed",
             text: undefined,
+            responseEntryId: undefined,
             error: {
               code: "result_too_large",
               message:

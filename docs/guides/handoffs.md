@@ -353,6 +353,12 @@ attachment preparation. Herdsman resolves the durable artifact through a
 hidden canonical binding and carries that binding across Pi session boundaries
 so the receiving session can forward the same semantic ref later.
 
+A result delivers only its selected final response. To recover the earlier
+visible responses of the same assignment after the Agent was cleaned up, the
+direct owner passes the result ref to `read_agent_responses`; see
+[Agent tools](../reference/agent.md#read_agent_responses). A recipient of a
+forwarded result can reuse it as evidence but cannot browse the source session.
+
 Pass an exact canonical reference through `files` when it was supplied as file
 evidence, especially for a transitive handoff:
 
