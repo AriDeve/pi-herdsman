@@ -37,6 +37,7 @@ export interface ManagedAgentState {
   piSessionId: string;
   piSessionFile?: string;
   agentDefinition?: string;
+  fastModeWarning?: string;
   cwd: string;
   activeRequestId?: string;
   projectAssignmentId?: string;
@@ -411,6 +412,7 @@ function validate(
           "piSessionId",
           "piSessionFile",
           "agentDefinition",
+          "fastModeWarning",
           "cwd",
           "activeRequestId",
           "projectAssignmentId",
@@ -616,6 +618,11 @@ function validate(
       (typeof v.agentDefinition !== "string" || !v.agentDefinition.trim())
     )
       throw new Error("Invalid agentDefinition");
+    if (
+      v.fastModeWarning !== undefined &&
+      (typeof v.fastModeWarning !== "string" || !v.fastModeWarning.trim())
+    )
+      throw new Error("Invalid fastModeWarning");
     if (v.lastAck !== undefined) {
       const ack = v.lastAck as Record<string, unknown>;
       const ackKeys = [

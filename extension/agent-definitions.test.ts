@@ -89,6 +89,44 @@ test("bundled definition bodies do not prescribe coordination APIs", () => {
     assert.doesNotMatch(body, contractPattern, name);
 });
 
+test("fastMode is an optional boolean ordinary-Agent override", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-herdsman-fast-mode-"));
+  withPiAgentDir(root, () => {
+    let definition = discoverAgent("reviewer");
+    assert.equal(definition.frontmatter.fastMode, undefined);
+    for (const value of [true, false, undefined]) {
+      updateAgentOverride(definition, "fastMode", value);
+      definition = discoverAgent("reviewer");
+      assert.equal(definition.frontmatter.fastMode, value);
+      assert.equal(agentDefinitionMetadata(definition).fastMode, value);
+    }
+  });
+  assert.throws(
+    () =>
+      discoverAgentDefinitionsWithContents(
+        '---\nname: custom\nfastMode: "true"\n---\n',
+      ),
+    /field fastMode: must be a boolean/,
+  );
+  for (const name of [
+    FLEXIBLE_LEAD_DEFINITION_NAME,
+    ORCHESTRATOR_LEAD_DEFINITION_NAME,
+    MANAGED_LEAD_DEFINITION_NAME,
+    MANAGER_DEFINITION_NAME,
+    CHIEF_DEFINITION_NAME,
+  ]) {
+    const roles = mkdtempSync(join(tmpdir(), "pi-herdsman-fast-role-"));
+    mkdirSync(join(roles, "agents"));
+    writeFileSync(
+      join(roles, "agents", `${name}.md`),
+      `---\nname: ${name}\nfastMode: false\n---\n`,
+    );
+    withPiAgentDir(roles, () =>
+      assert.throws(() => discoverRoleDefinition(name), /fastMode/),
+    );
+  }
+});
+
 test("parses scalar frontmatter fields and applies defaults", () => {
   const definition = discoverAgentDefinitionsWithContents(
     "---\nname: custom\ninheritSkills: false\n---\n\nPrompt\n",

@@ -1736,6 +1736,9 @@ export function formatAgentDefinitions(
     if (!name) return [];
     const routing = [
       ...(definition.enabled === false ? ["status disabled"] : []),
+      ...(typeof definition.fastMode === "boolean"
+        ? [`fast mode ${definition.fastMode ? "on" : "off"}`]
+        : []),
       `tools ${formatTools(definition)}`,
       `skills ${formatSkills(definition)}`,
       ...(Array.isArray(definition.agents) && definition.agents.length
@@ -1908,6 +1911,10 @@ export function renderAgentDefinitionsOverview(
     } else if (thinking) {
       lines.push(humanRow(theme, "thinking", thinking));
     }
+    if (typeof definition.fastMode === "boolean")
+      lines.push(
+        humanRow(theme, "fast mode", definition.fastMode ? "on" : "off"),
+      );
 
     const tools = humanTools(definition);
     if (tools) lines.push(humanRow(theme, "tools", tools));

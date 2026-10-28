@@ -12947,6 +12947,142 @@ test("Definitions toggles enabled state for bundled definitions", async () => {
   }
 });
 
+test("Definitions excludes Fast mode from every reserved role profile", async () => {
+  setLeadEnvironment();
+  const pi = fakePi();
+  registerExtension!(pi.pi as never);
+  const command = pi.commandOptions.get("agents");
+  const context = fakeContext();
+  context.hasUI = true;
+  context.mode = "rpc";
+  const roleNames = [
+    "flexible-lead",
+    "orchestrator-lead",
+    "managed-lead",
+    "manager",
+    "chief",
+  ];
+  let categoryVisits = 0;
+  let selectedRoleIndex = 0;
+  const actionOptions = new Map<string, string[]>();
+  Object.assign(context.ui, {
+    select: async (label: string, options: string[]) => {
+      if (label === "Definitions")
+        return categoryVisits++ === 0 ? "Role profiles" : undefined;
+      if (label === "Role profiles") {
+        const role = roleNames[selectedRoleIndex];
+        return role === undefined
+          ? undefined
+          : options.find((option) => option.startsWith(role));
+      }
+      if (roleNames.includes(label)) {
+        actionOptions.set(label, options);
+        selectedRoleIndex++;
+      }
+      return undefined;
+    },
+  });
+  try {
+    await command.handler("definitions", context);
+    assert.equal(selectedRoleIndex, roleNames.length);
+    for (const role of roleNames)
+      assert.ok(
+        !actionOptions
+          .get(role)
+          ?.some((option) => option.startsWith("Fast mode")),
+        `${role} exposes Fast mode`,
+      );
+  } finally {
+    await pi.events.get("session_shutdown")?.[0]();
+  }
+});
+
+test("Definitions persists Fast mode overrides and exposes project values on inherit", async () => {
+  setLeadEnvironment();
+  const definitionName = "fast-mode-agent";
+  const projectRoot = mkdtempSync(join(PI_AGENT_ROOT, "fast-mode-project-"));
+  const projectDirectory = join(projectRoot, ".pi", "agents");
+  const projectPath = join(projectDirectory, `${definitionName}.md`);
+  const globalPath = join(PI_AGENTS_DIR, `${definitionName}.md`);
+  const projectContent = `---\nname: ${definitionName}\nfastMode: true\n---\nProject instructions\n`;
+  const originalGlobal = `---\nname: ${definitionName}\ndescription: Global instructions\nfastMode: false\nmodel: provider/model\n---\nGlobal instructions\n`;
+  realFs.mkdirSync(projectDirectory, { recursive: true });
+  realFs.writeFileSync(projectPath, projectContent);
+  realFs.writeFileSync(globalPath, originalGlobal);
+  const pi = fakePi();
+  registerExtension!(pi.pi as never);
+  const command = pi.commandOptions.get("agents");
+  const context = fakeContext();
+  context.cwd = projectRoot;
+  context.hasUI = true;
+  context.mode = "rpc";
+  const choices = ["On", "Off", "Inherit definition"] as const;
+  const expectedStates = [
+    { effective: false, global: false },
+    { effective: true, global: true },
+    { effective: false, global: false },
+    { effective: true, global: undefined },
+  ] as const;
+  let categoryVisits = 0;
+  let definitionVisits = 0;
+  let actionVisits = 0;
+  let choiceVisits = 0;
+  const assertCurrentState = (index: number) => {
+    const definition = discoverAgentDefinitions({ projectRoot }).find(
+      (candidate) => candidate.name === definitionName,
+    );
+    const state = expectedStates[index]!;
+    assert.equal(definition?.projectSource, projectPath);
+    assert.equal(definition?.frontmatter.fastMode, state.effective);
+    assert.equal(
+      realFs.readFileSync(globalPath, "utf8"),
+      state.global === undefined
+        ? originalGlobal.replace("fastMode: false\n", "")
+        : originalGlobal.replace(
+            "fastMode: false",
+            `fastMode: ${state.global}`,
+          ),
+    );
+    assert.equal(realFs.readFileSync(projectPath, "utf8"), projectContent);
+  };
+  Object.assign(context.ui, {
+    select: async (label: string, options: string[]) => {
+      if (label === "Definitions")
+        return categoryVisits++ === 0 ? "Agent definitions" : undefined;
+      if (label === "Agent definitions")
+        return definitionVisits++ === 0
+          ? options.find((option) => option.includes(definitionName))
+          : undefined;
+      if (label === definitionName) {
+        assertCurrentState(actionVisits);
+        const fastModeItem = options.find((option) =>
+          option.startsWith("Fast mode"),
+        );
+        assert.ok(fastModeItem, options.join(" | "));
+        const chooseFastMode = actionVisits++ < choices.length;
+        return chooseFastMode ? fastModeItem : undefined;
+      }
+      if (label === "Fast mode") {
+        assert.deepEqual(options, ["On", "Off", "Inherit definition"]);
+        const choice = choices[choiceVisits++]!;
+        return options.find((option) => option === choice);
+      }
+      return undefined;
+    },
+  });
+  try {
+    assertCurrentState(0);
+    await command.handler("definitions", context);
+    assert.equal(actionVisits, expectedStates.length);
+    assert.equal(choiceVisits, choices.length);
+    assertCurrentState(expectedStates.length - 1);
+  } finally {
+    await pi.events.get("session_shutdown")?.[0]();
+    realFs.rmSync(globalPath, { force: true });
+    realFs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("Definitions refreshes the model registry before post-model thinking choices", async () => {
   setLeadEnvironment();
   const pi = fakePi({ thinkingLevel: "high" });

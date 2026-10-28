@@ -9405,6 +9405,58 @@ test("rejects invalid assignment prerequisites before lifecycle mutation", async
   }
 });
 
+test("delegation delivers a persisted launch warning to its direct owner without rejecting work", async () => {
+  setLeadEnvironment();
+  const label = "fast-warning";
+  const warning =
+    "Fast mode is unavailable for local/model; the Agent continues without fast mode.";
+  const startup = startupExecutor(label, () => DEFAULT_PI_SESSION_ID);
+  const pi = fakePi({
+    exec: (command, args) => {
+      const response = startup.exec(command, args);
+      if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
+        const state = readAgentState(startup.mailbox)!;
+        writeAgentState(startup.mailbox, {
+          ...state,
+          fastModeWarning: warning,
+        });
+      }
+      return response;
+    },
+  });
+  registerExtension!(pi.pi as never);
+  await pi.events.get("session_start")![0](undefined, fakeContext());
+  try {
+    const result = await registeredAgentTool(pi, "delegate").execute(
+      "fast-warning-call",
+      { definition: "agent", label, task: "map" },
+      undefined,
+      undefined,
+      fakeContext(),
+    );
+    assert.equal(result.details.ok, true, JSON.stringify(result.details));
+    assert.deepEqual(result.details.warnings, [warning]);
+    assert.ok(
+      result.content.some(
+        (part: { type: string; text?: string }) =>
+          part.type === "text" && part.text?.includes(warning),
+      ),
+    );
+    assert.equal(
+      readAgentState(startup.mailbox)?.ownerSessionId,
+      LEAD_SESSION_ID,
+    );
+    assert.equal(
+      readAgentState(startup.mailbox)?.activeRequestId,
+      result.details.request_id,
+    );
+  } finally {
+    pi.events.get("session_shutdown")?.[0]();
+    startup.stopMailboxConsumer();
+    resetAgentMailbox(startup.mailbox);
+  }
+});
+
 test("delegate keeps an explicit human-readable label", async () => {
   setLeadEnvironment();
   const label = "review-map";

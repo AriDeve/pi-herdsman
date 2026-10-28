@@ -89,8 +89,8 @@ profiles, not Pi launch definitions. They may configure only `name`,
 `description`, `body`, `bodyMode` on matching overlays, `tools`, and
 `excludeTools`; Manager and Chief may additionally configure `agents` as their
 direct-delegation allowlist. Ordinary Lead profiles reject `agents`. These
-profiles reject `model`, `thinking`, `systemPromptMode`, `enabled`, `permission`,
-`noTools`,
+profiles reject `model`, `thinking`, `fastMode`, `systemPromptMode`, `enabled`,
+`permission`, `noTools`,
 `noBuiltinTools`, `skills`, `noSkills`, `inheritSkills`, `extensions`,
 `noExtensions`, `inheritGlobalContext`, and `inheritProjectContext`.
 `bodyMode` is valid only on a matching overlay as described below.
@@ -131,7 +131,7 @@ definition is launch configuration, not assignment state. A running managed
 Lead is not hot-reconfigured when definition files change.
 
 `managed-lead` supports the ordinary launch-policy fields, except it does not
-support `enabled`, `agents`, or `permission`. Its system prompt must use
+support `enabled`, `agents`, `permission`, or `fastMode`. Its system prompt must use
 `append`; an override that selects `replace` is rejected so project or global
 policy cannot remove the Lead runtime contract. Herdsman always preserves the
 Lead coordination tools required by the runtime role even when an explicit tool
@@ -163,6 +163,29 @@ the root lead. Pi clamps a thinking level to the selected model's capabilities.
 Fresh-delegation settings are snapshotted at launch; changing the controller
 does not change an active agent.
 
+### Fast mode
+
+Ordinary Agents may set `fastMode: true` or `fastMode: false`. Reserved role
+profiles, including `managed-lead`, reject this field.
+
+An explicit value applies to the selected model at each fresh or continued
+Agent launch, after OMP restores the session and before the assignment starts:
+
+- `true` requests priority service through OMP's native tier controls and
+  capability checks. If unavailable, the Agent continues without fast mode and
+  the delegation or continuation response warns its direct owner.
+- `false` clears priority or ultrafast for the selected model's family, leaving
+  non-fast tiers such as `flex` unchanged.
+- When omitted from every definition layer, fresh delegation uses OMP's
+  configured tier and continuation preserves its saved session tier. The
+  spawning controller's live `/fast` selection is not copied.
+
+The setting is launch policy, not continuous enforcement: editing the definition
+does not affect an active Agent, and changing its model during a session does
+not reapply the policy. Priority may cost more and does not guarantee a speedup.
+
+### Availability
+
 `enabled` controls Agent-definition availability. A disabled definition remains
 visible in the `/agents definitions` UI so it can be enabled again, but it is
 omitted from the runtime `agent_definitions` capability summary. A definition
@@ -184,6 +207,7 @@ the fallback.
 | `description`           | string                                                                | absent                                                                 | Display/selection description.                                                                                                                                                            |
 | `model`                 | non-empty string                                                      | spawning controller for fresh `delegate`; saved session for `continue` | Explicit value is passed as Pi model selection.                                                                                                                                           |
 | `thinking`              | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `false` | spawning controller for fresh `delegate`; saved session for `continue` | Explicit value wins; `false` launches as `off`.                                                                                                                                           |
+| `fastMode`              | boolean                                                               | fresh OMP configured tier; saved session tier for `continue`           | Ordinary Agents only. Explicit value applies at each launch; see Fast mode above.                                                                                                         |
 | `systemPromptMode`      | `append` or `replace`                                                 | `append`                                                               | Controls whether the effective body is appended to or replaces Pi's base system prompt. `replace` is an explicit escape hatch for ordinary custom definitions; `managed-lead` rejects it. |
 | `bodyMode`              | `append` or `replace`                                                 | `replace` for non-empty matching overlay body                          | Valid only when overlaying an existing lower-precedence definition; consumed during body composition.                                                                                     |
 | `noTools`               | boolean                                                               | OMP normal tool policy                                                 | Disables inherited tools; explicitly allowed tools and required managed infrastructure remain available. Applied at runtime without removing builtin registrations.                       |
@@ -365,8 +389,8 @@ When a new agent generation is constructed:
 
 Every new agent generation expands the effective body and its file references
 once at launch. Session continuation preserves the Pi session history while
-using the current effective definition configuration; model and thinking follow
-the execution-settings precedence above.
+using the current effective definition configuration; model, thinking, and
+fast mode follow the execution-settings rules above.
 
 ## Runtime prompt order
 

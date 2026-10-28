@@ -141,6 +141,7 @@ Selecting an ordinary Agent definition opens:
 ```text
 Model
 Thinking
+Fast mode
 Enabled
 Details…
 ```
@@ -151,8 +152,14 @@ thinking rows display `inherit · <current session value>` when the current
 value is available. Thinking uses Pi's supported levels when the selected
 model is known.
 
-Selecting the managed Lead opens the same Model, Thinking, and Details actions,
-without `Enabled`.
+Fast mode offers `On`, `Off`, and `Inherit definition`. Inherit removes only the
+global `fastMode` override, exposing any lower-layer value. If every layer omits
+it, a fresh Agent uses OMP's configured tier and continuation preserves the saved
+session tier. See [Fast mode](agent-definition-schema.md#fast-mode) for native
+capability checks and owner warnings.
+
+Selecting the managed Lead opens Model, Thinking, and Details actions, without
+`Enabled` or `Fast mode`.
 
 Selecting any runtime profile, including Manager and Chief, opens `Details` only.
 
@@ -163,7 +170,7 @@ Thinking options use the effective model's supported levels when resolvable,
 or Pi Herdsman's validated vocabulary when not.
 
 The command edits only the selected supported top-level `model`, `thinking`,
-or `enabled` line in the global Markdown override. Runtime profiles have no
+`fastMode`, or `enabled` line in the global Markdown override. Runtime profiles have no
 editable frontmatter action. Edits preserve unrelated frontmatter and the
 complete body.
 
@@ -171,10 +178,10 @@ Details re-resolves the selected definition when opened, so it reflects current
 overlays and body references even if the menu remained open while configuration
 changed.
 
-Model, thinking, and enabled changes apply to future assignments, not
-already-running agents or the lead Pi session. Fresh `delegate` assignments inherit the spawning controller's
-current settings when fields are unset; `continue` restores the saved
-session's settings.
+Model, thinking, fast mode, and enabled changes apply to future assignments, not
+already-running agents or the lead Pi session. When model or thinking fields are
+unset, fresh `delegate` assignments inherit those settings from the spawning
+controller; `continue` restores them from the saved session.
 
 Standalone global definitions are editable too. Removing a model or thinking
 field selects `Inherit current session`; removing any other field inherits its

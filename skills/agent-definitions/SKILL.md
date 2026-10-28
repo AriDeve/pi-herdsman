@@ -1,6 +1,6 @@
 ---
 name: agent-definitions
-description: Manage Pi Herdsman Agent definitions and reserved role profiles. Use when inspecting, creating, customizing, enabling, disabling, or changing Agent-definition models, thinking, tools, skills, extensions, delegation, permissions, or instructions.
+description: Manage Pi Herdsman Agent definitions and reserved role profiles. Use when inspecting, creating, customizing, enabling, disabling, or changing Agent-definition models, thinking, fast mode, tools, skills, extensions, delegation, permissions, or instructions.
 ---
 
 # Pi Herdsman Agent definitions
@@ -54,6 +54,10 @@ this skill does not define a second schema or management API.
      rather than relying on prompt prose.
    - Herdsman preserves `permission:` for compatible extensions but does not
      enforce its contents itself.
+   - For ordinary Agents, `fastMode: true` requests priority and `fastMode: false`
+     disables fast tiers at launch. Omission preserves OMP/session defaults,
+     not the Lead's live `/fast` selection. Reserved roles reject `fastMode`;
+     consult the schema's Fast mode section for continuation and warning behavior.
    - Before editing a reserved role definition, read the canonical schema for
      its restrictions and authority boundaries.
    - Lead, Manager, and Chief runtime profiles are not launch definitions. They

@@ -54,6 +54,7 @@ const STRING_FIELDS = new Set([
 ]);
 const BOOLEAN_CAPABILITY_FIELDS = new Set([
   "enabled",
+  "fastMode",
   "noTools",
   "noBuiltinTools",
   "noSkills",
@@ -128,6 +129,7 @@ export type Frontmatter = {
   enabled?: boolean;
   model?: string;
   thinking?: string | false;
+  fastMode?: boolean;
   bodyMode?: BodyMode;
   permission?: { [key: string]: unknown };
   noTools?: boolean;
@@ -263,6 +265,8 @@ function validateDefinition(
     invalid("permission", "must be a mapping");
   if (typeof frontmatter.name !== "string" || !frontmatter.name)
     invalid("name", "must be a non-empty string");
+  if (isReservedRoleDefinition(name) && frontmatter.fastMode !== undefined)
+    invalid("fastMode", "is only supported on ordinary Agent definitions");
   for (const field of BOOLEAN_CAPABILITY_FIELDS)
     if (
       frontmatter[field] !== undefined &&
@@ -665,6 +669,9 @@ export function agentDefinitionMetadata(
     ...(typeof description === "string" ? { description } : {}),
     ...(model === undefined ? {} : { model }),
     ...(thinking === undefined ? {} : { thinking }),
+    ...(frontmatter.fastMode === undefined
+      ? {}
+      : { fastMode: frontmatter.fastMode }),
     ...(frontmatter.noTools === undefined
       ? {}
       : { noTools: frontmatter.noTools }),
@@ -692,7 +699,7 @@ export function agentDefinitionMetadata(
   };
 }
 
-export type AgentOverrideField = "model" | "thinking" | "enabled";
+export type AgentOverrideField = "model" | "thinking" | "enabled" | "fastMode";
 
 export function updateAgentOverride(
   definition: AgentDefinition,
@@ -982,6 +989,8 @@ export async function agentLaunchArgs(
   if (thinking !== undefined) {
     args.push("--thinking", thinking);
   }
+  if (managedAgent && typeof frontmatter.fastMode === "boolean")
+    args.push("--herdsman-fast-mode", frontmatter.fastMode ? "on" : "off");
 
   const mode = frontmatter.systemPromptMode ?? "append";
   if (!SYSTEM_PROMPT_MODES.has(mode))
@@ -1236,6 +1245,10 @@ export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
   pi.registerFlag("herdsman-launch-policy", {
     type: "string",
     description: "Herdsman child capability policy",
+  });
+  pi.registerFlag("herdsman-fast-mode", {
+    type: "string",
+    description: "Herdsman Agent launch fast policy (on/off)",
   });
   let cachedPolicy: OmpLaunchPolicy | null | undefined;
   const policy = (): OmpLaunchPolicy | undefined => {

@@ -7068,6 +7068,9 @@ export function createAgentController(
             session_id: runtime.piSessionId,
             session_path: runtime.piSessionFile,
             request_id: requestId,
+            ...(state.fastModeWarning
+              ? { warnings: [state.fastModeWarning] }
+              : {}),
           };
         } catch (caught) {
           if (promptWriteFailed) throw caught;
@@ -7406,7 +7409,12 @@ export function createAgentController(
                 ? value.definition
                 : undefined;
           const bounded = truncateModelText(
-            formatToolModelResult(p.action, value),
+            [
+              ...(Array.isArray(value.warnings)
+                ? value.warnings.map((warning) => `Warning: ${warning}`)
+                : []),
+              formatToolModelResult(p.action, value),
+            ].join("\n"),
             {
               keep: "head",
               sessionId: ctx.sessionManager.getSessionId(),

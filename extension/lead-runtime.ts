@@ -1719,6 +1719,9 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
             const managedDefinition =
               definition.name === MANAGED_LEAD_DEFINITION_NAME;
             const runtimeProfile = isRuntimeRoleDefinition(definition.name);
+            const reservedRoleDefinition = isReservedRoleDefinition(
+              definition.name,
+            );
             const action = await host.selectMenu(
               ctx,
               definition.name,
@@ -1747,7 +1750,22 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
                       },
                     ]
                   : []),
-                ...(!isReservedRoleDefinition(definition.name)
+                ...(!reservedRoleDefinition
+                  ? [
+                      {
+                        value: "fastMode",
+                        label: "Fast mode",
+                        description:
+                          definition.frontmatter.fastMode === true
+                            ? "on"
+                            : definition.frontmatter.fastMode === false
+                              ? "off"
+                              : "inherit definition",
+                        help: "Agent generations only. No definition value: fresh delegation uses OMP's configured tier; continuation uses saved session tier. Running Agents unchanged.",
+                      },
+                    ]
+                  : []),
+                ...(!reservedRoleDefinition
                   ? [
                       {
                         value: "enabled",
@@ -1803,7 +1821,7 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
               }
               continue;
             }
-            let field: "model" | "thinking" | "enabled";
+            let field: "model" | "thinking" | "enabled" | "fastMode";
             let value: string | boolean | undefined;
             if (action === "model") {
               field = "model";
@@ -1905,6 +1923,44 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
               if (!selectedThinking) continue;
               value =
                 selectedThinking === "inherit" ? undefined : selectedThinking;
+            } else if (action === "fastMode") {
+              field = "fastMode";
+              const selectedFastMode = await host.selectMenu(
+                ctx,
+                "Fast mode",
+                [
+                  {
+                    value: "on",
+                    label: "On",
+                    help: "Set fast mode for future Agent generations. Running Agents are unchanged.",
+                  },
+                  {
+                    value: "off",
+                    label: "Off",
+                    help: "Disable fast mode for future Agent generations. Running Agents are unchanged.",
+                  },
+                  {
+                    value: "inherit",
+                    label: "Inherit definition",
+                    help: "Remove only the global override; lower layers stay effective. No value: fresh delegation uses OMP's configured tier; continuation uses saved session tier.",
+                  },
+                ],
+                definition.frontmatter.fastMode === true
+                  ? "on"
+                  : definition.frontmatter.fastMode === false
+                    ? "off"
+                    : "inherit",
+              );
+              if (
+                selectedFastMode !== "on" &&
+                selectedFastMode !== "off" &&
+                selectedFastMode !== "inherit"
+              )
+                continue;
+              value =
+                selectedFastMode === "inherit"
+                  ? undefined
+                  : selectedFastMode === "on";
             } else if (action === "enabled") {
               field = "enabled";
               value = !host.agentDefinitionEnabled(definition);
@@ -1923,8 +1979,14 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
               result.changed
                 ? field === "enabled"
                   ? `${definition.name} ${value ? "enabled" : "disabled"}.`
-                  : `${definition.name} ${field} ${value === undefined ? "inherited" : `set to ${value}`}.`
-                : `${definition.name} ${field} is already inherited; no change made.`,
+                  : field === "fastMode"
+                    ? `${definition.name} fast mode ${
+                        value === undefined
+                          ? "inherited"
+                          : `set to ${value === true ? "on" : "off"}`
+                      }.`
+                    : `${definition.name} ${field} ${value === undefined ? "inherited" : `set to ${value}`}.`
+                : `${definition.name} ${field === "fastMode" ? "fast mode" : field} is already inherited; no change made.`,
             );
             definition = verified;
           }

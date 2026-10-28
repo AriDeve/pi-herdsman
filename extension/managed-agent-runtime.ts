@@ -3320,6 +3320,27 @@ export function registerManagedAgentSessionStartHandler(
           removeAgentBootstrap(mailbox);
         }
       }
+      const fastMode = pi.getFlag("herdsman-fast-mode");
+      if (fastMode !== undefined && fastMode !== "on" && fastMode !== "off")
+        throw new Error("Invalid Herdsman Agent fast-mode launch policy");
+      let fastModeWarning: string | undefined;
+      // Native OMP publishes Bun-only TS; Node-based repository tooling cannot
+      // statically load this boundary. Only explicitly configured OMP launches need it.
+      if (fastMode !== undefined) {
+        const { applyOmpFastMode } = await import("./omp-fast-mode.ts");
+        // Runtime is native OMP; shared orchestration types still use upstream Pi.
+        const nativePi = pi as unknown as Parameters<
+          typeof applyOmpFastMode
+        >[0];
+        const nativeModel = ctx.model as unknown as Parameters<
+          typeof applyOmpFastMode
+        >[1];
+        fastModeWarning = applyOmpFastMode(
+          nativePi,
+          nativeModel,
+          fastMode === "on",
+        );
+      }
       const release = options.claimAssignmentLock(mailbox, "session_start", {
         label: execution.assignment.agentLabel,
         paneId: execution.assignment.paneId,
@@ -3345,6 +3366,7 @@ export function registerManagedAgentSessionStartHandler(
             build: options.build,
             updatedAt: Date.now(),
           };
+        execution.assignment.fastModeWarning = fastModeWarning;
         writeAgentState(mailbox, execution.assignment);
       } finally {
         release();

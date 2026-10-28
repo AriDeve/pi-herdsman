@@ -323,7 +323,7 @@ export default function(pi) {
     assert.equal(
       current.next,
       steps.length,
-      `${name}: incomplete tool sequence`,
+      `${name}: incomplete tool sequence (exit ${exit})\n${stderr}\n${stdout}`,
     );
     assert.equal(exit, 0, `${name}: ${stderr}\n${stdout}`);
     assert.doesNotMatch(

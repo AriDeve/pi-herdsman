@@ -13,6 +13,7 @@
 - Derive child capability guidance from the effective tool policy, reapply native selection after deferred MCP discovery, and distinguish managed owner questions/final results from OMP agent-URI messaging.
 - Trace ask creation, idle deferral, input inclusion, delivery failures, and correlated replies through content-free session diagnostics.
 - Exercise provider-visible schemas and indirect MCP execution over OMP's native HTTP/SSE and stdio boundaries, including forbidden-target rejection.
+- Configure ordinary Agents with `fastMode: true` or `false`, including through the Definitions UI; apply native OMP tier policy on fresh and continued launches and warn the owner when priority is unavailable.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

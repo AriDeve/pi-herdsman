@@ -285,12 +285,18 @@ a separate configuration interface.
 The human `Definitions` menu separates ordinary definitions under `Agent
 definitions` from reserved profiles under `Role profiles` (in canonical role
 order). Runtime profiles provide Details only. Each row identifies its contributing source or
-sources as `bundled`, `project`, and/or `global`. Model, thinking, and enabled
-settings can be changed through the menu, but edits always write global
-overrides. `Inherit current session` removes only that field. Unset model and
-thinking fields inherit the spawning controller for fresh delegation, while
-continuation restores the saved session's settings. Contextual help updates for
-the selected row.
+sources as `bundled`, `project`, and/or `global`. Model, thinking, fast mode, and
+enabled settings can be changed for ordinary Agents, but edits always write global
+overrides. Fast mode offers **On**, **Off**, and **Inherit definition**. Inherit
+definition removes only the global `fastMode` field; a lower-layer value remains
+effective. Without a value in any definition layer, fresh delegation uses OMP's
+configured tier and continuation uses the saved session tier, not the Lead's
+live `/fast` setting. Reserved role profiles do not offer fast mode.
+
+For model and thinking, `Inherit current session` removes only that field.
+Unset model and thinking fields inherit the spawning controller for fresh
+delegation, while continuation restores the saved session's settings. Contextual
+help updates for the selected row.
 
 ## Override an existing bundled role
 
