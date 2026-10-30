@@ -108,7 +108,11 @@ import {
   testTmpRoot,
 } from "./support.ts";
 const { claimAgentMailbox } = await import("./mailbox.ts");
-const ownedSessionContext = (id: string, label: string) =>
+const ownedSessionContext = (
+  id: string,
+  label: string,
+  details: Record<string, unknown> = {},
+) =>
   fakeContext([
     {
       type: "custom_message",
@@ -131,6 +135,7 @@ const ownedSessionContext = (id: string, label: string) =>
                 ) as any
             )?.data?.definition ?? "agent",
           status: "completed",
+          ...details,
         },
       },
     },
@@ -1255,6 +1260,173 @@ test("nested managed-Agent delegation publishes inherited and local evidence as 
     );
 
     stopConsumer?.();
+    const resumedLabel = `replacement-child-${randomUUID().slice(0, 8)}`;
+    const resumedSessionId = randomUUID();
+    const resumedSessionPath = join(
+      PI_AGENT_ROOT,
+      `${resumedLabel}-session.jsonl`,
+    );
+    const resumedRequestId = randomUUID();
+    const resumedRunId = randomUUID();
+    const resumedPaneId = `pane-${randomUUID()}`;
+    const resumedEvidenceAssignmentId = randomUUID();
+    const resumedSession = {
+      id: resumedSessionId,
+      path: resumedSessionPath,
+      cwd: "/tmp",
+      entries: [
+        {
+          type: "custom",
+          customType: "pi-herdsman-agent-definition",
+          data: {
+            sessionId: resumedSessionId,
+            definition: "agent",
+            label: resumedLabel,
+          },
+        },
+        {
+          type: "custom",
+          customType: "pi-herdsman-agent-required-evidence",
+          data: {
+            version: 1,
+            sessionId: resumedSessionId,
+            requestId: resumedRequestId,
+            runId: resumedRunId,
+            ownerSessionId: identity.data.sessionId,
+            workspaceId: WORKSPACE,
+            agentLabel: resumedLabel,
+            paneId: resumedPaneId,
+            projectAssignmentId,
+            evidenceAssignmentId: resumedEvidenceAssignmentId,
+            inheritedEvidence: [inherited],
+            localEvidence: [],
+          },
+        },
+      ],
+    };
+    nativeSessions.set(resumedSessionId, resumedSession);
+    realFs.writeFileSync(resumedSessionPath, "{}", "utf8");
+    contextEntries.push({
+      type: "custom_message",
+      message: {
+        customType: "pi-herdsman-agent-result",
+        details: {
+          piSessionId: resumedSessionId,
+          piSessionFile: resumedSessionPath,
+          ownerSessionId: identity.data.sessionId,
+          runId: resumedRunId,
+          requestId: resumedRequestId,
+          workspaceId: WORKSPACE,
+          agentLabel: resumedLabel,
+          agentDefinition: "agent",
+          paneId: resumedPaneId,
+          projectAssignmentId,
+          status: "completed",
+        },
+      },
+    });
+    const replacementProjectAssignmentId = randomUUID();
+    const replacementParentRequestId = randomUUID();
+    writeAgentState(parentMailbox, {
+      ...parent,
+      activeRequestId: replacementParentRequestId,
+      projectAssignmentId: replacementProjectAssignmentId,
+    });
+    const replacementMarker = {
+      type: "custom",
+      customType: "pi-herdsman-agent-required-evidence",
+      data: {
+        ...acceptedContext.data,
+        requestId: replacementParentRequestId,
+        projectAssignmentId: replacementProjectAssignmentId,
+        evidenceAssignmentId: replacementParentRequestId,
+      },
+    };
+    contextEntries.push(replacementMarker);
+    removeProjectAssignment(projectRuntime, "repo-key", projectBranch);
+    writeProjectAssignment(projectRuntime, {
+      version: 2,
+      id: replacementProjectAssignmentId,
+      repoKey: "repo-key",
+      branch: projectBranch,
+      text: "Replacement parent project",
+      requiredEvidence: [],
+    });
+    try {
+      const replaced = await pi.tools
+        .find((tool) => tool.name === "continue_agent")!
+        .execute(
+          "nested-replaced-project",
+          { session: resumedSessionPath, task: "must fail closed" },
+          undefined,
+          undefined,
+          context,
+        );
+      assert.equal(
+        replaced.details.ok,
+        false,
+        JSON.stringify(replaced.details),
+      );
+      assert.match(
+        replaced.details.error.message,
+        /belongs to a replaced project assignment/,
+      );
+      const clearedDuringContinuationRequestId = randomUUID();
+      writeAgentState(parentMailbox, {
+        ...parent,
+        activeRequestId: clearedDuringContinuationRequestId,
+        projectAssignmentId: undefined,
+      });
+      contextEntries.push({
+        type: "custom",
+        customType: "pi-herdsman-agent-required-evidence",
+        data: {
+          ...acceptedContext.data,
+          requestId: clearedDuringContinuationRequestId,
+          projectAssignmentId: undefined,
+          evidenceAssignmentId: undefined,
+          inheritedEvidence: [],
+          localEvidence: [],
+        },
+      });
+      try {
+        const cleared = await pi.tools
+          .find((tool) => tool.name === "continue_agent")!
+          .execute(
+            "nested-cleared-project",
+            { session: resumedSessionPath, task: "must fail closed" },
+            undefined,
+            undefined,
+            context,
+          );
+        assert.equal(
+          cleared.details.ok,
+          false,
+          JSON.stringify(cleared.details),
+        );
+        assert.match(
+          cleared.details.error.message,
+          /belongs to a replaced project assignment/,
+        );
+      } finally {
+        contextEntries.pop();
+      }
+    } finally {
+      contextEntries.pop();
+      contextEntries.pop();
+      nativeSessions.delete(resumedSessionId);
+      realFs.rmSync(resumedSessionPath, { force: true });
+      removeProjectAssignment(projectRuntime, "repo-key", projectBranch);
+      writeProjectAssignment(projectRuntime, {
+        version: 2,
+        id: projectAssignmentId,
+        repoKey: "repo-key",
+        branch: projectBranch,
+        text: "Parent project",
+        requiredEvidence: [laterProjectRequirement],
+      });
+      writeAgentState(parentMailbox, parent);
+    }
     const clearedRequestId = randomUUID();
     const clearedParent = {
       ...parent,
@@ -8258,6 +8430,185 @@ test("session continuation starts a new agent generation with current prompt con
       ...currentAssignment,
       requiredEvidence: [],
     });
+    // Normal delivered-result cleanup removes the mailbox; the exact owner result
+    // and saved accepted-evidence marker remain as the durable proof.
+    resetAgentMailbox(savedMailbox);
+    const deliveredProof = {
+      runId: savedState.runId,
+      requestId: savedRequestId,
+      workspaceId: savedState.workspaceId,
+      paneId: savedState.paneId,
+      projectAssignmentId,
+    };
+    for (const [caseName, proof, expected] of [
+      [
+        "missing-project-proof",
+        { ...deliveredProof, projectAssignmentId: undefined },
+        /Cannot verify the current accepted assignment/,
+      ],
+      [
+        "mismatched-request-proof",
+        { ...deliveredProof, requestId: randomUUID() },
+        /superseded by a later accepted assignment/,
+      ],
+      ...(
+        ["runId", "workspaceId", "paneId", "projectAssignmentId"] as const
+      ).map(
+        (field) =>
+          [
+            `mismatched-${field}-proof`,
+            {
+              ...deliveredProof,
+              [field]:
+                field === "runId" || field === "projectAssignmentId"
+                  ? randomUUID()
+                  : "other",
+            },
+            /Saved assignment evidence does not match the exact owned session/,
+          ] as const,
+      ),
+    ] as const) {
+      const rejected = await registeredAgentTool(pi, "continue").execute(
+        caseName,
+        { session: session.path, task: "must fail closed" },
+        undefined,
+        undefined,
+        ownedSessionContext(session.id, name, proof),
+      );
+      assert.equal(
+        rejected.details.ok,
+        false,
+        JSON.stringify(rejected.details),
+      );
+      assert.equal(rejected.details.error?.category, "invalid_request");
+      assert.match(rejected.details.error.message, expected);
+    }
+    const acceptedMarker = session.entries.at(-1) as any;
+    for (const [caseName, marker, expected] of [
+      [
+        "later-accepted-request",
+        {
+          ...acceptedMarker.data,
+          requestId: randomUUID(),
+          localEvidence: [],
+        },
+        /superseded by a later accepted assignment/,
+      ],
+      [
+        "same-request-dropped-inherited",
+        { ...acceptedMarker.data, inheritedEvidence: [] },
+        /conflicting required-evidence metadata/,
+      ],
+      [
+        "same-request-changed-evidence-assignment",
+        { ...acceptedMarker.data, evidenceAssignmentId: randomUUID() },
+        /conflicting required-evidence metadata/,
+      ],
+      [
+        "same-request-changed-retained-evidence",
+        {
+          ...acceptedMarker.data,
+          localEvidence: [{ ...localEvidence, name: "changed.md" }],
+        },
+        /conflicting required-evidence metadata/,
+      ],
+    ] as const) {
+      session.entries.push({ ...acceptedMarker, data: marker });
+      try {
+        const rejected = await registeredAgentTool(pi, "continue").execute(
+          caseName,
+          { session: session.path, task: "must fail closed" },
+          undefined,
+          undefined,
+          ownedSessionContext(session.id, name, deliveredProof),
+        );
+        assert.equal(rejected.details.ok, false, caseName);
+        assert.match(rejected.details.error.message, expected, caseName);
+      } finally {
+        session.entries.pop();
+      }
+    }
+    const removedThenChanged = {
+      id: randomUUID(),
+      name: "review result",
+      result: {
+        ref: "result:reviewer#1",
+        canonicalRef: `result:${randomUUID()}`,
+      },
+    };
+    session.entries.push(
+      {
+        ...acceptedMarker,
+        data: {
+          ...acceptedMarker.data,
+          localEvidence: [localEvidence, removedThenChanged],
+        },
+      },
+      {
+        ...acceptedMarker,
+        data: { ...acceptedMarker.data, localEvidence: [localEvidence] },
+      },
+      {
+        ...acceptedMarker,
+        data: {
+          ...acceptedMarker.data,
+          localEvidence: [
+            localEvidence,
+            {
+              ...removedThenChanged,
+              result: {
+                ...removedThenChanged.result,
+                canonicalRef: `result:${randomUUID()}`,
+              },
+            },
+          ],
+        },
+      },
+    );
+    try {
+      const reintroduced = await registeredAgentTool(pi, "continue").execute(
+        "same-request-reintroduced-changed-evidence",
+        { session: session.path, task: "must fail closed" },
+        undefined,
+        undefined,
+        ownedSessionContext(session.id, name, deliveredProof),
+      );
+      assert.equal(reintroduced.details.ok, false);
+      assert.match(
+        reintroduced.details.error.message,
+        /conflicting required-evidence metadata/,
+      );
+    } finally {
+      session.entries.pop();
+      session.entries.pop();
+      session.entries.pop();
+    }
+    const indirect = await registeredAgentTool(pi, "continue").execute(
+      "indirect-owner-proof",
+      { session: session.path, task: "must fail closed" },
+      undefined,
+      undefined,
+      ownedSessionContext(session.id, name, {
+        ...deliveredProof,
+        ownerSessionId: randomUUID(),
+      }),
+    );
+    assert.equal(indirect.details.ok, false, JSON.stringify(indirect.details));
+    assert.match(indirect.details.error.message, /outside the caller's proven/);
+    realFs.renameSync(inheritedEvidence.path, unavailableEvidencePath);
+    try {
+      const missingSnapshot = await registeredAgentTool(pi, "continue").execute(
+        "missing-snapshot-after-cleanup",
+        { session: session.path, task: "must fail closed" },
+        undefined,
+        undefined,
+        ownedSessionContext(session.id, name, deliveredProof),
+      );
+      assert.equal(missingSnapshot.details.ok, false);
+      assert.match(missingSnapshot.details.error.message, /is unavailable/);
+    } finally {
+      realFs.renameSync(unavailableEvidencePath, inheritedEvidence.path);
+    }
     const result = await registeredAgentTool(pi, "continue").execute(
       "id",
       {
@@ -8266,7 +8617,7 @@ test("session continuation starts a new agent generation with current prompt con
       },
       undefined,
       undefined,
-      ownedSessionContext(session.id, name),
+      ownedSessionContext(session.id, name, deliveredProof),
     );
     assert.equal(result.details.ok, true, JSON.stringify(result.details));
     assert.equal(bootstrapPrepares, 0);

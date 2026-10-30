@@ -622,7 +622,15 @@ mock.module("./omp-runtime.ts", {
 });
 const definitions = await import("./agent-definitions.ts");
 mock.module("./agent-definitions.ts", {
-  namedExports: { ...definitions, registerOmpLaunchPolicy() {} },
+  namedExports: {
+    ...definitions,
+    registerOmpLaunchPolicy(
+      pi: Parameters<typeof definitions.registerOmpLaunchPolicy>[0],
+    ) {
+      if (pi.getFlag("herdsman-launch-policy") !== undefined)
+        return definitions.registerOmpLaunchPolicy(pi);
+    },
+  },
 });
 const foreignSessions = await import("./foreign-session.ts");
 const { SessionManager: fixtureSessions } =

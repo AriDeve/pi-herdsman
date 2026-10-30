@@ -130,6 +130,14 @@ Concurrent or otherwise conflicting managed representations of the exact
 session fail closed. The controller's own active Pi session cannot be continued
 to itself.
 
+After normal delivered-result cleanup removes the Agent mailbox, a project-scoped
+session can still be continued. Its owner's persisted delivered result records
+the project assignment, and the exact saved session retains the accepted
+required-evidence snapshot; both must match the same request, run, workspace,
+pane, and direct owner. The original snapshot is preserved. Results saved
+without that project identity cannot prove the assignment, so such sessions
+remain rejected, as do retired or replaced project authority.
+
 When `contextRetirement` is enabled, `continue_agent` is rejected for a retired
 managed-agent session; delegate a fresh agent and pass the previous
 handoff/result and relevant files instead. Retired results explicitly instruct
@@ -377,7 +385,12 @@ Agent from its saved Pi session, including after the Agent generation was cleane
 It reads saved evidence only: it does not start an Agent, create an assignment, or make a
 model request. Managers and Chiefs retain this read-only operation when fresh
 delegation is disabled and no live Agents remain; each call still verifies direct
-ownership. Pass exactly one scope selector:
+ownership. `session`, `result`, `response`, and `offset` remain optional in the
+exposed tool schema. The runtime enforces the selector invariant: supply exactly
+one of `session` or `result`; `response` and `offset` are optional retrieval
+controls.
+
+Pass exactly one scope selector:
 
 - `result` is the exact semantic result ref shown in your own completion. Scope is that
   one assignment: the responses persisted between its accepted request and its

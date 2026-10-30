@@ -98,6 +98,7 @@ import {
   isRuntimeRoleDefinition,
   RESERVED_ROLE_DEFINITION_NAMES,
   matchesToolPattern,
+  ompLaunchTools,
   expandAgentBodyFiles,
   FLEXIBLE_LEAD_DEFINITION_NAME,
   ORCHESTRATOR_LEAD_DEFINITION_NAME,
@@ -108,6 +109,7 @@ import {
   writePrivatePromptSnapshots,
   type AgentDefinition,
   type RoleDefinitionName,
+  type OmpLaunchPolicy,
 } from "./agent-definitions.ts";
 import type { MessageFileInput } from "./core.ts";
 import type { ManagedAgentState, ResultBinding } from "./mailbox.ts";
@@ -261,6 +263,7 @@ type SupervisoryProfile = {
 type LeadRuntimeOptions = {
   leadRuntime?: LeadRuntimeState;
   leadToolState?: ReturnType<typeof createLeadToolState>;
+  launchPolicy?: () => OmpLaunchPolicy | undefined;
   ownedToolNames: readonly string[];
   leadCoordinationToolNames: readonly string[];
   onLeadRuntimeReady?(
@@ -2601,6 +2604,7 @@ export function registerLeadRuntime(
     | { mode: LeadExecutionMode; valid: false; managed: boolean }
     | undefined;
   let leadExecutionPending = false;
+  let launchDefaultTools: string[] | undefined;
   let supervisoryProfile: SupervisoryProfile | undefined;
   let inheritedProjection:
     { mode: LeadExecutionMode; excluded: readonly string[] } | undefined;
@@ -3314,8 +3318,21 @@ export function registerLeadRuntime(
     const baseline = leadToolState.getLeadTools() ?? [];
     if (leadExecutionPending) return leadToolState.normalizeLeadTools([]);
     if (!leadExecution) return leadToolState.normalizeLeadTools(baseline);
-    if (leadExecution.managed)
-      return leadToolState.normalizeLeadTools(baseline);
+    if (leadExecution.managed) {
+      const policy = options.launchPolicy?.();
+      if (!policy) return leadToolState.normalizeLeadTools(baseline);
+      const selected = ompLaunchTools(policy, pi.getAllTools());
+      const active = new Set([
+        ...(launchDefaultTools ?? []),
+        ...pi.getActiveTools(),
+        ...policy.requiredTools,
+      ]);
+      return leadToolState.normalizeLeadTools(
+        policy.tools === null
+          ? selected.filter((name) => active.has(name))
+          : selected,
+      );
+    }
     if (!leadExecution.valid) return leadToolState.normalizeLeadTools([]);
     return leadToolState.projectLeadTools(baseline, leadExecution.definition);
   };
@@ -4271,6 +4288,14 @@ export function registerLeadRuntime(
       leadExecution = undefined;
     },
     setLeadExecutionPending: (pending: boolean) => {
+      // Startup temporarily removes ordinary tools while resolving the role.
+      // Preserve launch-selected defaults, not the historical ordinary baseline.
+      if (
+        pending &&
+        launchDefaultTools === undefined &&
+        options.launchPolicy?.()?.tools === null
+      )
+        launchDefaultTools = pi.getActiveTools();
       leadExecutionPending = pending;
     },
     restoreLeadExecution,

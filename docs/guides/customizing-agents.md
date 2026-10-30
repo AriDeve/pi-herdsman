@@ -170,6 +170,20 @@ launches, not already-running Leads. Use `stop_lead` followed by
 `resume_project` when a running project Lead must restart with changed launch
 policy.
 
+Managed Lead reconciliation projects the policy selected for the current process
+launch against the current registered tool inventory. Allowed wildcard matches
+registered after startup remain available after coordination calls such as
+`list_agents`; exclusions and required Lead coordination tools still apply.
+The saved ordinary Lead tool baseline does not replace that managed selection.
+When `tools` is omitted, the policy preserves permitted active defaults rather
+than activating every registered tool.
+
+Native provider-schema containment has a known limitation: a tool registered
+default-active after policy preparation can reach the provider's captured tool
+list before another reconciliation. The tool-call policy still rejects denied
+execution. Active-tool selection alone is not proof that the native provider
+schema has been refreshed.
+
 ## Minimal model override
 
 ```markdown

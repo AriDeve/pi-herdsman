@@ -480,6 +480,11 @@ test("semantic coordination tools expose exact strict object contracts", () => {
       }),
       false,
     );
+  assert.equal(
+    tools.get("read_agent_responses")!.strict,
+    false,
+    "response recovery keeps optional selectors out of provider strict mode",
+  );
   for (const [name, valid, invalid, required] of SEMANTIC_TOOL_CASES) {
     const tool = tools.get(name);
     assert.ok(tool, `missing ${name}`);

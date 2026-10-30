@@ -2505,11 +2505,13 @@ test("parent settlement waits for agent delivery and ignores result cleanup lag"
   setAgentEnvironment("delegating-parent", ["child"]);
   process.env.PI_HERDSMAN_AGENT_DEFINITION = "parent";
   const parent = managedState("delegating-parent");
+  const childProjectAssignmentId = randomUUID();
   const childOne = {
     ...managedState("child-one", REQUEST_ID, recoveryIdentity("child-one")),
     ownerSessionId: parent.piSessionId,
     piSessionId: CHILD_SESSION_ID,
     piSessionFile: "/tmp/child-one.jsonl",
+    projectAssignmentId: childProjectAssignmentId,
   };
   const secondRequestId = randomUUID();
   const childTwo = {
@@ -2691,6 +2693,10 @@ test("parent settlement waits for agent delivery and ignores result cleanup lag"
       triggerTurn: true,
       deliverAs: "steer",
     });
+    assert.equal(
+      (pi.sentMessageCalls[0].message as any).details.projectAssignmentId,
+      childProjectAssignmentId,
+    );
     assert.match(
       String((pi.sentMessageCalls[0].message as any).content),
       /Delegation status:/,

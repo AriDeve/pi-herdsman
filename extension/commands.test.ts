@@ -908,6 +908,150 @@ test("Lead execution state is strict and profile tools preserve only Lead capabi
   );
 });
 
+for (const scenario of [
+  {
+    name: "allowlist and exclusion",
+    tools: ["read", "bash", "mcp__policy_*"],
+    noBuiltinTools: false,
+    initial: ["read"],
+    late: ["read", "mcp__policy_allowed"],
+  },
+  {
+    name: "builtin provenance",
+    tools: ["read", "mcp__policy_*"],
+    noBuiltinTools: true,
+    initial: [],
+    late: ["mcp__policy_allowed"],
+  },
+  {
+    name: "empty allowlist",
+    tools: [],
+    noBuiltinTools: false,
+    initial: [],
+    late: [],
+  },
+  {
+    name: "active defaults",
+    tools: null,
+    noBuiltinTools: false,
+    initial: ["read"],
+    late: ["read"],
+  },
+]) {
+  test(`managed Lead reconciles the launch policy against late tools instead of saved ordinary tools: ${scenario.name}`, async () => {
+    setLeadEnvironment();
+    process.env.HERDR_WORKSPACE_ID = WORKSPACE;
+    process.env.HERDR_SOCKET_PATH = join(
+      tmpdir(),
+      `policy-${randomUUID()}.sock`,
+    );
+    const sessionId = randomUUID();
+    const branch = `policy-${randomUUID()}`;
+    const entries: unknown[] = [
+      {
+        type: "custom",
+        customType: "pi-herdsman-lead-execution",
+        data: { mode: "orchestrate", leadTools: [] },
+      },
+    ];
+    writeProjectAssignment(supervisionRuntime(), {
+      version: 2,
+      id: sessionId,
+      repoKey: "repo-key",
+      branch,
+      piSessionFile: `/tmp/${sessionId}.jsonl`,
+      text: "Check tool policy",
+      requiredEvidence: [],
+    });
+    const fixture = fakeChiefPi({
+      entries,
+      activeTools: ["read", "bash"],
+      exec: (_command, args) => {
+        if (args[0] === "worktree" && args[1] === "list")
+          return {
+            stdout: JSON.stringify({
+              id: AGENT_ID,
+              result: {
+                source: {
+                  source_workspace_id: WORKSPACE,
+                  repo_key: "repo-key",
+                  repo_name: "project",
+                  source_checkout_path: "/tmp",
+                },
+                worktrees: [],
+              },
+            }),
+            stderr: "",
+            code: 0,
+          };
+      },
+    });
+    const originalInventory = fixture.pi.getAllTools.bind(fixture.pi);
+    const lateTools: string[] = [];
+    fixture.pi.getAllTools = () =>
+      [...originalInventory(), ...lateTools.map((name) => ({ name }))].map(
+        (tool) => ({
+          ...tool,
+          sourceInfo: {
+            source: ["read", "bash"].includes(tool.name)
+              ? "builtin"
+              : "extension",
+          },
+        }),
+      );
+    const policy = {
+      tools: scenario.tools,
+      excluded: ["bash", "mcp__policy_denied", "delegate_agent"],
+      noBuiltinTools: scenario.noBuiltinTools,
+      requiredTools: leadTools,
+      skillDirectories: [],
+    };
+    Object.assign(fixture.pi, {
+      getFlag: (name: string) =>
+        name === "herdsman-launch-policy" ? JSON.stringify(policy) : undefined,
+    });
+    const context = fakeContext(entries);
+    context.sessionManager.getSessionId = () => sessionId;
+    registerExtension!(fixture.pi as never);
+    try {
+      for (const handler of fixture.events.get("session_start")!)
+        await handler(undefined, context);
+      assert.deepEqual(
+        new Set(fixture.pi.getActiveTools()),
+        new Set([...scenario.initial, ...leadTools]),
+      );
+      lateTools.push(
+        "mcp__policy_allowed",
+        "mcp__policy_denied",
+        "foreign_denied",
+      );
+      // Once parsed, later flag/definition changes cannot hot-reconfigure this process.
+      policy.tools = [];
+      const list = agentTool(fixture, "list");
+      for (let i = 0; i < 2; i++) {
+        await list.execute(
+          `policy-list-${i}`,
+          {},
+          undefined,
+          undefined,
+          context,
+        );
+        assert.deepEqual(
+          new Set(fixture.pi.getActiveTools()),
+          new Set([...scenario.late, ...leadTools]),
+        );
+      }
+      assert.deepEqual(sessionLeadExecutionState(entries)?.leadTools, []);
+    } finally {
+      for (const handler of fixture.events.get("session_shutdown") ?? [])
+        await handler(undefined, context);
+      removeProjectAssignment(supervisionRuntime(), "repo-key", branch);
+      delete process.env.HERDR_SOCKET_PATH;
+      setLeadEnvironment();
+    }
+  });
+}
+
 test("ordinary Lead profile switches retain the saved tool baseline", async () => {
   setLeadEnvironment();
   const entries: any[] = [];

@@ -27,6 +27,22 @@ provider. A managed Agent produces a full report and a later addendum; the check
 verifies result delivery, automatic cleanup, post-cleanup `read_agent_responses`
 recovery of both responses, session continuation for a second assignment, and
 assignment isolation, with no further child model request during recovery.
+`bun scripts/omp-response-recovery-check.ts --project-continuation` (after
+`npm run build`) has a restored Manager delegate a project whose Lead delegates a
+worker, waits for its delivered result, pane and mailbox cleanup, continues the
+exact worker session, and verifies the second result and cleanup.
+The same native harness has a bounded managed-Lead policy scenario:
+`bun scripts/omp-response-recovery-check.ts --manager-handoff` (after
+`npm run build`). A restored Manager delegates a project Lead, pauses and
+resumes the same assigned session twice, and sends a new coordination message
+after each resume. The strict scenario requires default-active late tools:
+`list_agents` calls and probe executions check reconciliation with a saved empty
+ordinary baseline, while the loopback provider checks the restricted Lead
+surface and Manager isolation. It currently fails on excluded late tools
+appearing in native provider schemas. Completion requires a native
+provider-agnostic request-tool projection boundary; making the excluded probe
+inactive does not satisfy this check.
+
 The upstream Pi smoke scripts remain Pi-targeted; OMP delegation requires a
 separate named Herdr session with OMP's integration loaded.
 

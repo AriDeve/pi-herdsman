@@ -1241,8 +1241,10 @@ export function ompLaunchTools(
     .map((tool) => tool.name);
 }
 
-/** Install before role listeners so their baseline captures the restricted tools. */
-export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
+/** Install before role listeners; return the same cached process policy for reconciliation. */
+export function registerOmpLaunchPolicy(
+  pi: ExtensionAPI,
+): () => OmpLaunchPolicy | undefined {
   pi.registerFlag("herdsman-launch-policy", {
     type: "string",
     description: "Herdsman child capability policy",
@@ -1337,4 +1339,5 @@ export function registerOmpLaunchPolicy(pi: ExtensionAPI): void {
     for (const directory of policy()?.skillDirectories ?? [])
       rmSync(directory, { recursive: true, force: true });
   });
+  return policy;
 }

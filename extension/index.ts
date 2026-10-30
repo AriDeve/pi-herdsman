@@ -697,7 +697,7 @@ export default function (pi: ExtensionAPI): void {
 
 function registerHerdsman(pi: ExtensionAPI): void {
   registerOmpRuntime(pi);
-  registerOmpLaunchPolicy(pi);
+  const launchPolicy = registerOmpLaunchPolicy(pi);
   const appendEntry = pi.appendEntry.bind(pi);
   pi.appendEntry = (customType, data) => {
     appendEntry(customType, data);
@@ -2184,6 +2184,7 @@ function registerHerdsman(pi: ExtensionAPI): void {
       leadRuntimes = registerLeadRuntime(pi, {
         leadRuntime,
         leadToolState,
+        launchPolicy,
         ownedToolNames,
         leadCoordinationToolNames: LEAD_COORDINATION_TOOLS,
         onLeadRuntimeReady: (
