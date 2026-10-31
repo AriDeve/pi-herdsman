@@ -618,7 +618,11 @@ mock.module("typebox", {
 // Core orchestration fixtures use the internal lifecycle contract. The native
 // host boundary has dedicated adapter tests and a real OMP smoke check.
 mock.module("./omp-runtime.ts", {
-  namedExports: { registerOmpRuntime() {} },
+  namedExports: {
+    registerOmpRuntime() {
+      return { onOperationEnd: undefined };
+    },
+  },
 });
 const definitions = await import("./agent-definitions.ts");
 mock.module("./agent-definitions.ts", {

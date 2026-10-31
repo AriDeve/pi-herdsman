@@ -724,7 +724,7 @@ export const AGENT_EXECUTION_OWNERSHIP_GUIDANCE =
   "Each unresolved unit of work has one executor. Using delegate_agent transfers that assignment's execution ownership to the Agent until it resolves. After delegation succeeds, stop executing, inspecting, or analyzing that delegated scope locally; do not assign overlapping work. Continue only concrete, necessary work clearly outside the delegated scope that you still own.";
 export const AGENT_UNRESOLVED_GUIDANCE =
   "Use list_agents when fresh Agent state or ownership is materially needed for a control or recovery decision, or to refresh the definition roster; do not use it for progress polling. " +
-  "Follow current available_tools and revalidation: steer_agent queues a cooperative correction for Pi to deliver after the current assistant turn and its tool calls reach a steering boundary; it does not preempt the current operation. interrupt_agent cancels the current operation and replaces its direction. " +
+  "Follow current available_tools and revalidation: steer_agent queues a cooperative correction for Pi to deliver after the current assistant turn and its tool calls reach a steering boundary; it does not preempt the current operation. interrupt_agent requests cancellation and continues the same assignment with replacement direction. Acceptance is not proof of application; do not resend an accepted interrupt. " +
   "Use reply_agent only to answer that Agent's exact pending ask_owner question. close_agent destructively closes an eligible Agent generation. inspect_agent provides bounded live terminal/process evidence; read_agent_transcript provides bounded persisted conversation/tool evidence. " +
   "When Agent work is unresolved, handle required control, then continue only necessary work you still own or end the turn without concluding; results or attention resume the session automatically. Do not poll with status requests, sleep, or other waiting mechanisms. " +
   "Stale health attention is diagnosis, not progress polling: use attached evidence first and, when absent or insufficient, perform at most one bounded diagnostic read before passive waiting. A repeated reminder for the same stale episode is additional recovery evidence: unchanged qualifying activity means the Agent has not crossed an execution boundary since the previous reminder. A steer queued during that unchanged episode cannot have taken effect yet. Do not repeat diagnostic reads solely because a reminder fired. Continue waiting only while existing evidence still positively supports a legitimate long-running operation; otherwise use interrupt_agent to stop the current operation and continue the same assignment. " +
@@ -4092,7 +4092,9 @@ export function createAgentController(
       acknowledgementObserved = true;
       if (!ack.accepted) {
         const category =
-          ack.code === "busy" || ack.code === "idle"
+          ack.code === "busy" ||
+          ack.code === "idle" ||
+          ack.code === "interrupt_pending"
             ? "agent_busy"
             : ack.code === "ambiguous"
               ? "target_ambiguous"
@@ -4103,7 +4105,19 @@ export function createAgentController(
                   : ack.code === "incompatible"
                     ? "incompatible_build"
                     : "internal_failure";
-        fail(category, ack.message ?? "Agent rejected request", operation);
+        fail(category, ack.message ?? "Agent rejected request", operation, {
+          ids: { label: runtime.label, requestId, runId: runtime.runId },
+          ...(ack.code === "interrupt_pending"
+            ? {
+                details: {
+                  control_state: "interrupt_pending",
+                  unavailable_tools: ["steer_agent", "interrupt_agent"],
+                },
+                nextAction:
+                  "The interrupt is already accepted. Do not resend controls while cancellation is pending; continue independent work or wait for the Agent response.",
+              }
+            : {}),
+        });
       }
       if (kind === "task") {
         runtime.activeRequestId = requestId;
@@ -4416,6 +4430,7 @@ export function createAgentController(
       agent: runtime.label,
       presentation_agent_definition: runtime.agentDefinition,
       request_id: sentRequestId,
+      ...(operation === "interrupt" ? { delivery: "accepted" } : {}),
       ...(operation === "reply" ? { ask_id: askId } : {}),
       ...(operation === "reply"
         ? { assignment_request_id: runtime.activeRequestId }
@@ -8012,7 +8027,7 @@ export function createAgentController(
       name: "interrupt_agent",
       label: "interrupt agent",
       description:
-        "Cancel a live Agent's current Pi operation and continue the same assignment with replacement direction.",
+        "Request cancellation of a live Agent's current operation and continue the same assignment with replacement direction. Acceptance is not confirmation of application; earlier native-queued input may run first. Do not resend an accepted interrupt.",
       parameters: agentMessageParameters,
       promptSnippet: undefined,
       promptGuidelines: [FILE_HANDOFF_GUIDANCE],
@@ -8917,7 +8932,7 @@ export function createAgentController(
               "This is advisory inactivity, not proof of a hang.",
               "Streaming tool output does not count as qualifying progress.",
               "steer_agent queues a cooperative correction; it does not preempt the current operation.",
-              "Use interrupt_agent only when the current operation itself must be abandoned; interrupt_agent cancels that operation, supersedes earlier steering Pi has not yet delivered, and continues the same assignment.",
+              "Use interrupt_agent only when the current operation itself must be abandoned; it requests cancellation and continues the same assignment with replacement direction.",
               "Use close_agent only to abandon the assignment or as destructive fallback.",
             ].join("\n"),
             display: true,

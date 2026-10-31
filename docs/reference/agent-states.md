@@ -13,13 +13,14 @@ durable assignment/convergence evidence. It is not a raw herdr lifecycle string.
 | `unknown`  | Exact safe control state cannot be proved.                                                               |
 | `lost`     | Physical execution is proven absent before a durable terminal result; the assignment remains unresolved. |
 
-## `available_tools` is authoritative
+## `available_tools` is a revalidated snapshot
 
 A live agent record in `list_agents` includes an `available_tools` snapshot.
 Use only tools currently listed there; do not infer control eligibility
 from `state` alone. `steer_agent` means active work accepts cooperative steering,
-`interrupt_agent` means a currently working Pi operation may be preempted,
-superseding earlier undelivered steering with replacement direction,
+`interrupt_agent` means cancellation may be requested for a currently working
+operation, followed by replacement direction on the same assignment. Acceptance
+does not prove application; older native-queued input may run first.
 `reply_agent` means a correlated pending `ask_owner` is valid, and
 `close_agent` means exact direct ownership and the current applicable close
 preflight permit teardown. For a
@@ -27,6 +28,9 @@ Lead-owned parent, that preflight includes its owned descendant cascade.
 `available_tools` never includes `delegate_agent`; an agent generation handles one assignment only. Every operation
 revalidates identity, ownership, mailbox state, and lifecycle immediately before
 mutation.
+The snapshot does not expose child-local pending interrupt state. A correlated
+`interrupt_pending` rejection means that control was not queued and identifies
+the temporarily unavailable tools; do not resend an already accepted interrupt.
 
 A delegating agent may be blocked while direct agent work is pending and still accept
 steering when `steer_agent` is listed, but it cannot expose `interrupt_agent` without a

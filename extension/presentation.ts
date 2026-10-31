@@ -2092,6 +2092,15 @@ export function formatToolModelResult(
       ...(details
         ? [
             evidenceLine("Stage", details.stage),
+            evidenceLine("Control state", details.control_state),
+            evidenceLine(
+              "Unavailable tools",
+              Array.isArray(details.unavailable_tools)
+                ? details.unavailable_tools
+                    .filter((tool) => typeof tool === "string")
+                    .join(", ")
+                : undefined,
+            ),
             evidenceLine(
               "Startup diagnostic",
               typeof details.startupDiagnostic === "string"
@@ -2216,7 +2225,7 @@ export function formatToolModelResult(
   if (action === "interrupt") {
     return [
       `Interrupt accepted for agent ${value(v.agent) || "unknown"}.`,
-      "The current Pi operation was asked to stop and the replacement instruction continues the same assignment.",
+      "The current operation was asked to stop; replacement is accepted, not confirmed applied. Earlier native-queued input may run first. Do not resend it.",
       ...(value(v.session_id) ? [`Session: ${v.session_id}`] : []),
       ...(value(v.request_id) ? [`Request: ${v.request_id}`] : []),
       ...(value(v.assignment_request_id)
@@ -3748,7 +3757,7 @@ export function renderAgentStaleMessage(
         "Continue waiting only while existing evidence positively supports a legitimate long-running operation.",
         "Otherwise interrupt the current operation and continue the same assignment.",
         "Steer queues a cooperative correction; it does not preempt the current operation.",
-        "Interrupt only when the current operation must be abandoned; it supersedes earlier steering Pi has not yet delivered and continues the same assignment.",
+        "Interrupt only when the current operation must be abandoned; it requests cancellation and continues the same assignment with replacement direction.",
         "Close only when abandoning the assignment is intended.",
       ]
     : [

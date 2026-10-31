@@ -12,6 +12,10 @@ import {
   registerOmpLaunchPolicy,
   type OmpLaunchPolicy,
 } from "./agent-definitions.ts";
+import {
+  createManagedAgentExecutionState,
+  registerManagedAgentSettlementHandlers,
+} from "./managed-agent-runtime.ts";
 
 type Event = Record<string, unknown>;
 const ACCEPTED = "11111111-1111-4111-8111-111111111111";
@@ -47,7 +51,7 @@ function fixture() {
       sent.push({ content, options });
     },
   } as unknown as ExtensionAPI;
-  registerOmpRuntime(pi);
+  const runtime = registerOmpRuntime(pi);
   const on = pi.on as unknown as (name: string, handler: Handler) => void;
   const emit = async (name: string, event: Event = {}) => {
     const results: unknown[] = [];
@@ -62,6 +66,7 @@ function fixture() {
     sent,
     tools,
     ctx,
+    runtime,
     setIdle(value: boolean) {
       idle = value;
     },
@@ -114,6 +119,87 @@ test("retries cannot settle assignments and terminal evidence uses persisted ide
   });
   assert.equal(settled[0]?.aborted, true);
   assert.equal(settled[0]?.outcome, "aborted");
+});
+
+test("interrupt dispatch does not wait for whole-run settlement or publish its cancelled result", async () => {
+  for (const pending of [false, true]) {
+    for (const willContinue of [false, true]) {
+      const f = fixture();
+      f.ctx.hasPendingMessages = () => pending;
+      const execution = createManagedAgentExecutionState();
+      execution.pendingInterruptReplacement = "Owner interrupt: replacement";
+      let settlements = 0;
+      const unexpected = () => {
+        throw new Error("Unexpected result publication");
+      };
+      const lifecycle = registerManagedAgentSettlementHandlers(
+        f.pi,
+        execution,
+        {
+          onOperationEnd: f.runtime.onOperationEnd,
+          delegationEnabled: false,
+          tryClaimAssignmentLock: unexpected,
+          sameIdentity: () => false,
+          hasUndeliveredDirectChildWork: () => false,
+          reportMetadata: unexpected,
+          appendStateError: unexpected,
+          appendResultError: unexpected,
+          resultWriteMaxAttempts: 1,
+          settleControllerResults: async () => {
+            settlements++;
+          },
+        },
+      );
+      try {
+        await f.emit("agent_end", {
+          messages: [{ role: "assistant", stopReason: "aborted", content: [] }],
+          willContinue,
+        });
+        assert.equal(f.sent[0]?.content, "Owner interrupt: replacement");
+        assert.equal(execution.pendingInterruptReplacement, undefined);
+        assert.equal(
+          settlements,
+          0,
+          "cancelled operation cannot settle the assignment",
+        );
+        await f.emit("agent_end", {
+          messages: [{ role: "assistant", stopReason: "stop", content: [] }],
+        });
+        assert.equal(f.sent.length, 1, "replacement is dispatched once");
+        assert.equal(settlements, pending ? 0 : 1);
+      } finally {
+        lifecycle.cleanup();
+      }
+    }
+  }
+});
+
+test("settlement failure preserves later handlers and native error reporting", async () => {
+  const f = fixture();
+  const failures = [
+    new Error("first settlement failure"),
+    new Error("second settlement failure"),
+  ];
+  f.on("agent_before_settle", () => {
+    throw failures[0];
+  });
+  f.on("agent_settled", async () => {
+    throw failures[1];
+  });
+  f.on("agent_settled", () =>
+    f.pi.sendUserMessage("later settlement completed"),
+  );
+  let reported: unknown;
+  try {
+    await f.emit("agent_end", {
+      messages: [{ role: "assistant", stopReason: "stop", content: [] }],
+    });
+  } catch (error) {
+    reported = error;
+  }
+  assert.equal(f.sent[0]?.content, "later settlement completed");
+  assert.ok(reported instanceof AggregateError);
+  assert.deepEqual(reported.errors, failures);
 });
 
 test("automatic compaction reason cannot leak into a later manual compaction", async () => {

@@ -28,7 +28,7 @@ For stale attention, use this decision sequence:
    of the reminder.
 6. Keep waiting only while existing evidence still justifies the operation;
    otherwise use `interrupt_agent` to abandon it and continue the same assignment.
-   Interrupt supersedes earlier undelivered steering.
+   Do not resend an accepted interrupt; older OMP-queued input may still run first.
 7. Use `close_agent` only when abandoning the assignment is intended.
 
 Other persistent actionable conditions may repeat approximately `5m → 2m30s →

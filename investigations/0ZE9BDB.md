@@ -356,6 +356,10 @@ unobserved points remains an inference.
 bun investigations/0ZE9BDB/interrupt.mjs
 ```
 
+These are pre-repair observations, retained from the investigation baseline.
+The current-source script now checks the bounded dispatch repair described
+below rather than asserting the obsolete delayed-dispatch behavior.
+
 The actual OMP adapter and managed settlement handler reproduced these cases,
 exit 0:
 
@@ -366,15 +370,15 @@ exit 0:
 3. An aborted event with pending input followed by natural stop with an empty
    queue delivers replacement only at the latter boundary.
 
-`extension/omp-runtime.ts:92–108` gates both managed settlement callbacks on
-whole-run continuation predicates. The pending interrupt's normal delivery path
-is `agent_settled` in `extension/managed-agent-runtime.ts:2111–2119`. Thus ordinary
-run continuation can suppress dispatch of an already accepted replacement.
+At the investigation baseline, `extension/omp-runtime.ts:92–108` gated both
+managed settlement callbacks on whole-run continuation predicates. Replacement
+delivery used `agent_settled` in `extension/managed-agent-runtime.ts:2111–2119`,
+so ordinary run continuation could suppress an accepted replacement.
 The earlier isolated input/projection probe also advertised steer/interrupt while
 the child rejected both, then accepted steering on the unchanged assignment after
 injected settlement.
 
-This proves a sufficient current-source mechanism. The historical journal omits
+This proved a sufficient baseline-source mechanism. The historical journal omits
 native `agent_end` emissions and both predicate values, so it cannot distinguish
 an adapter-filtered event from a host event emitted only after the continued run.
 It also does not authenticate the loaded extension bundle.
@@ -394,6 +398,9 @@ Do not clear the guard on elapsed time, invent success, add retries, or persist
 live process state as authority.
 
 ### Native repair prerequisite: OMP 18.14.1
+
+This subsection records the earlier strict-supersession implementation attempt,
+before the maintainer-approved bounded follow-up below.
 
 The subsequent implementation attempt verified the installed native host rather
 than assuming the adapter gate was the only obstacle. Executable fingerprint:
@@ -461,6 +468,49 @@ No passing-after repair evidence exists. Existing focused checks
 `extension/omp-runtime.test.ts` and `extension/agent-runtime.test.ts` passed
 88/88; that is compatibility evidence only.
 
+### Bounded Herdsman-only follow-up
+
+The maintainer subsequently accepted prompt operation-end dispatch without
+strict native queue supersession. The bounded change dispatches an accepted
+replacement at OMP `agent_end`, before whole-run settlement filters. That event
+cannot publish a terminal result even while native queue admission is still
+asynchronous. Ordinary pending-message and continuation guards remain intact;
+the shared Pi settled-event path is unchanged.
+
+Interrupt receipts identify `delivery: "accepted"`, not confirmed application.
+An exact child acknowledgment can identify `interrupt_pending` and the
+temporarily unavailable steer/interrupt tools; the rejected request was not
+queued. No owner-side pending cache or restored presentation is treated as live
+authority. Lifecycle snapshots still cannot expose this child-local pending
+window. The smallest safe improvement is the correlated rejection evidence and
+brief no-resend guidance, not a new live-state synchronization protocol.
+
+The focused dispatch regression failed before the change because replacement
+was absent under continuation/pending predicates. Pending-control checks failed
+before the change on generic `busy` and missing acceptance evidence. After the
+change, the five focused runtime/controller/mailbox/presentation files passed
+350/350. The native loopback scenario
+`bun scripts/omp-response-recovery-check.ts --interrupt` exercised real Herdsman,
+OMP and Herdr: replacement reached the provider before natural whole-run stop,
+no premature result was observed, and the single final result retained selected
+response identity and cleaned up normally.
+
+The native scenario measured six owner and three child model requests. One
+owner control was deliberately rejected while a fixture held cancellation open
+to verify model-visible pending evidence; it was not retried. Production adds
+no model/status requests, polling or retry path by code inspection; reduced
+paid failures and real-model instruction adherence were not measured. Earlier
+native smoke attempts exposed a fixture readiness race and an incorrect
+`isError` assertion; readiness now waits for the separate Herdr integration's
+working observation, and outcome checks use the structured result contract.
+
+Strict supersession remains externally blocked on OMP. Non-cooperative tools
+can still delay operation end; replacement dispatch is not confirmation that
+the model applied it. This bounded repair does not resolve the other historical
+outcome or ownership-policy tracks, and does not establish exact incident
+causation. Private before/after and native logs are under
+`.local/0ZE9BDB/repair/bounded-*.log`.
+
 ## Evidence limits and next decision
 
 - Historical entries identify OMP 18.14.0. Current executable checks returned
@@ -478,11 +528,10 @@ No passing-after repair evidence exists. Existing focused checks
   incident boundaries. These cannot be reconstructed from the saved conversation
   alone. No historical workloads were restarted to manufacture that evidence.
 
-Priority follow-up: obtain the supported native cancellation/queue-supersession
-operation described above, then implement the interrupt-ordering/projection
-repair. Separately decide whether close-before-result continuation is supported.
-Keep the managed empty-result cause open pending the missing lifecycle evidence
-or a native-host reproduction that distinguishes the demonstrated mechanisms.
+Residual follow-up: native queued-input supersession still requires host support.
+Separately decide whether close-before-result continuation is supported. The
+managed empty-result cause remains unresolved pending the missing lifecycle
+evidence or a native-host reproduction distinguishing the demonstrated mechanisms.
 
 These proposals preserve [durable intent versus transient state](../docs/adr/0002-persist-intent-and-derive-runtime-state.md)
 and [native integration ownership](../docs/adr/0008-prefer-native-pi-and-herdr-contracts.md).

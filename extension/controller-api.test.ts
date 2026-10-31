@@ -8680,6 +8680,7 @@ test("registered lead exposes semantic tools and guards live controls", async ()
   assert.match(rendered.text, new RegExp(`session: ${identity.piSessionId}`));
   assert.match(rendered.text, /assignment request: /);
   let interruptSubmitted: RequestRecord | undefined;
+  let interruptPending = false;
   const interruptPi = fakePi({
     exec: leadExec(
       label,
@@ -8691,7 +8692,15 @@ test("registered lead exposes semantic tools and guards live controls", async ()
         const current = readAgentState(requestMailbox)!;
         writeAgentState(requestMailbox, {
           ...current,
-          lastAck: { requestId, accepted: true, acknowledgedAt: Date.now() },
+          lastAck: interruptPending
+            ? {
+                requestId,
+                accepted: false,
+                code: "interrupt_pending",
+                message: "Replacement awaits operation end",
+                acknowledgedAt: Date.now(),
+              }
+            : { requestId, accepted: true, acknowledgedAt: Date.now() },
           updatedAt: Date.now(),
         });
       },
@@ -8718,8 +8727,31 @@ test("registered lead exposes semantic tools and guards live controls", async ()
   assert.equal(interrupt.details.ok, true);
   assert.equal(interrupt.details.action, "interrupt");
   assert.equal(interrupt.details.assignment_request_id, REQUEST_ID);
+  assert.equal(interrupt.details.delivery, "accepted");
   assert.equal(interruptSubmitted?.kind, "interrupt");
   assert.equal(interruptSubmitted?.text, "Stop and use the fallback.");
+  interruptPending = true;
+  const pendingControl = await agentTool(interruptPi, "steer").execute(
+    "pending-control",
+    {
+      agent: label,
+      message: "Do not queue this while cancellation is pending",
+    },
+    undefined,
+    undefined,
+    interruptContext,
+  );
+  assert.equal(pendingControl.details.error.category, "agent_busy");
+  assert.equal(
+    pendingControl.details.error.details.control_state,
+    "interrupt_pending",
+  );
+  assert.deepEqual(pendingControl.details.error.details.unavailable_tools, [
+    "steer_agent",
+    "interrupt_agent",
+  ]);
+  assert.equal(pendingControl.details.error.ids.label, label);
+  assert.match(pendingControl.content[0].text, /steer_agent.*interrupt_agent/);
   interruptPi.events.get("session_shutdown")?.[0]();
   accepting.events.get("session_shutdown")?.[0]();
   realFs.rmSync(steerFile, { force: true });

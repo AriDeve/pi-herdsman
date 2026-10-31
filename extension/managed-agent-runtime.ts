@@ -1548,8 +1548,8 @@ export function registerManagedAgentInputHandlers(
         id,
         false,
         ctx,
-        "busy",
-        "Agent interrupt is still settling",
+        "interrupt_pending",
+        "An accepted interrupt is awaiting operation-end dispatch; this control was not queued",
       );
       return { action: "handled" };
     }
@@ -1837,6 +1837,7 @@ export function registerManagedAgentSettlementHandlers(
   pi: ExtensionAPI,
   execution: ReturnType<typeof createManagedAgentExecutionState>,
   options: {
+    onOperationEnd?(handler: () => boolean): void;
     delegationEnabled: boolean;
     tryClaimAssignmentLock(mailbox: string): (() => void) | undefined;
     sameIdentity(left: ManagedAgentState, right: ManagedAgentState): boolean;
@@ -2108,6 +2109,15 @@ export function registerManagedAgentSettlementHandlers(
     if (execution.pendingResult && !execution.retryTimer)
       execution.retryTimer = setInterval(flush, 250);
   };
+  options.onOperationEnd?.(() => {
+    const replacement = execution.pendingInterruptReplacement;
+    if (!replacement) return false;
+    pi.sendUserMessage(replacement, { deliverAs: "steer" });
+    execution.pendingInterruptReplacement = undefined;
+    execution.latest = "";
+    execution.observation = undefined;
+    return true;
+  });
   pi.on(
     "agent_settled",
     async (event: { aborted: boolean }, ctx: ExtensionContext) => {
@@ -2164,6 +2174,7 @@ export function registerManagedAgentShutdownHandler(
 export function registerManagedAgentRuntime(
   pi: ExtensionAPI,
   options: {
+    onOperationEnd?(handler: () => boolean): void;
     build: RuntimeBuild;
     shellTimeoutSeconds: number;
     statusRuntime: ReturnType<typeof createAgentStatusRuntime>;
@@ -2724,6 +2735,7 @@ export function registerManagedAgentRuntime(
     pi,
     execution,
     {
+      onOperationEnd: options.onOperationEnd,
       delegationEnabled,
       tryClaimAssignmentLock: options.tryClaimAssignmentLock,
       sameIdentity: sameManagedAgentIdentity,
@@ -2796,6 +2808,7 @@ export function createManagedAgentRequestState(
     accepted: boolean,
     code?:
       | "busy"
+      | "interrupt_pending"
       | "idle"
       | "invalid"
       | "identity"
@@ -2829,6 +2842,7 @@ export function createManagedAgentRequestState(
     ctx: ExtensionContext,
     code?:
       | "busy"
+      | "interrupt_pending"
       | "idle"
       | "invalid"
       | "identity"

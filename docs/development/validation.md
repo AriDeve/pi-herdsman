@@ -27,6 +27,14 @@ provider. A managed Agent produces a full report and a later addendum; the check
 verifies result delivery, automatic cleanup, post-cleanup `read_agent_responses`
 recovery of both responses, session continuation for a second assignment, and
 assignment isolation, with no further child model request during recovery.
+`bun scripts/omp-response-recovery-check.ts --interrupt` (after `npm run build`)
+exercises actual owner controls and a managed Agent with a cancellable native
+tool. The scripted provider verifies accepted-versus-applied guidance, one
+deliberately rejected pending control with unavailable-tool evidence, replacement
+delivery before natural whole-run settlement, absence of premature results,
+selected-response provenance, and cleanup. Fixture readiness uses native Herdr
+observations without additional model/status tool calls. It does not establish
+strict native queue supersession or real-model adherence.
 `bun scripts/omp-response-recovery-check.ts --project-continuation` (after
 `npm run build`) has a restored Manager delegate a project whose Lead delegates a
 worker, waits for its delivered result, pane and mailbox cleanup, continues the

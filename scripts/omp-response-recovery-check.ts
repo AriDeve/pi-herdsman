@@ -15,19 +15,26 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const managerHandoff = process.argv.includes("--manager-handoff");
+const interruptSmoke = process.argv.includes("--interrupt");
+const interruptReady = Promise.withResolvers<void>();
+const releaseInterrupt = Promise.withResolvers<void>();
+let interruptPendingObserved = false;
+let interruptReplacementObserved = false;
 // --project-continuation: a Manager project Lead delegates a worker whose
 // evidence is project-scoped, lets normal cleanup remove its mailbox, then
 // continues the exact worker session.
 const projectContinuation = process.argv.includes("--project-continuation");
-const completion = projectContinuation
-  ? "PROJECT_CONTINUATION_DONE"
-  : managerHandoff
-    ? "POLICY_SMOKE_DONE"
-    : "RECOVERY_SMOKE_DONE";
+const completion = interruptSmoke
+  ? "INTERRUPT_SMOKE_DONE"
+  : projectContinuation
+    ? "PROJECT_CONTINUATION_DONE"
+    : managerHandoff
+      ? "POLICY_SMOKE_DONE"
+      : "RECOVERY_SMOKE_DONE";
 const leadTools = [
   "list_agents",
   "delegate_agent",
@@ -215,11 +222,11 @@ const waitForCleanup = async () => {
       )
     ).result?.panes as unknown[] | undefined;
     assert.ok(Array.isArray(panes), "pane list omitted panes");
-    // Project mode (project workspace only): the Lead pane remains; the worker pane and its
-    // mailbox state are removed by normal delivered-result cleanup.
+    // Project/interrupt checks require mailbox-state removal as well as pane
+    // disappearance, before the harness removes its owned temporary root.
     if (
       panes.length === 1 &&
-      (!projectContinuation || mailboxStates().length === 0)
+      (!(projectContinuation || interruptSmoke) || mailboxStates().length === 0)
     )
       break;
     assert.ok(
@@ -228,6 +235,10 @@ const waitForCleanup = async () => {
     );
     await Bun.sleep(250);
   }
+  if (interruptSmoke)
+    log(
+      "interrupt cleanup verified: child pane and mailbox state absent before root cleanup",
+    );
   childRequestsAtCleanup ??= requests.child;
 };
 
@@ -280,6 +291,31 @@ function* ownerProgram(): Generator<
   void,
   string
 > {
+  if (interruptSmoke) {
+    yield {
+      name: "delegate_agent",
+      args: {
+        definition: "interrupt-worker",
+        label: "reviewer",
+        task: "Run interrupt check",
+      },
+    };
+    yield {
+      name: "steer_agent",
+      args: { agent: "reviewer", message: "OLDER_OWNER_REPLY" },
+    };
+    yield {
+      name: "interrupt_agent",
+      args: { agent: "reviewer", message: "INTERRUPT_REPLACEMENT" },
+    };
+    yield {
+      name: "steer_agent",
+      args: { agent: "reviewer", message: "MUST_NOT_BE_QUEUED" },
+    };
+    yield { wait: /Result ref: result:reviewer#1/ };
+    yield { cleanup: true };
+    return;
+  }
   yield {
     name: "delegate_agent",
     args: {
@@ -349,7 +385,12 @@ async function ownerTurn(messages: Wire[], lead = false) {
       ]
     : managerHandoff
       ? ["delegate_project", "stop_lead", "resume_project", "message_staff"]
-      : ["delegate_agent", "continue_agent", "read_agent_responses"];
+      : [
+          "delegate_agent",
+          "continue_agent",
+          "read_agent_responses",
+          ...(interruptSmoke ? ["steer_agent", "interrupt_agent"] : []),
+        ];
   const results = messages.flatMap((message) => {
     const name =
       message.role === "tool" && message.tool_call_id
@@ -396,13 +437,81 @@ async function ownerTurn(messages: Wire[], lead = false) {
         value.name,
         "native tool result must match the scripted call",
       );
+      if (interruptSmoke && result.text.includes("interrupt_pending")) {
+        assert.ok(
+          result.text.includes("steer_agent") &&
+            result.text.includes("interrupt_agent"),
+        );
+        interruptPendingObserved = true;
+        releaseInterrupt.resolve();
+      }
       step = program.next(result.text);
-    } else return { call: value };
+    } else {
+      if (interruptSmoke && value.name === "steer_agent") {
+        await interruptReady.promise;
+        if (used === 1) {
+          // Fixture readiness only: wait for the separate Herdr integration's
+          // native working observation, not another model/status tool call.
+          for (let attempt = 0; ; attempt++) {
+            const inventory = await herdr("agent", "list");
+            const agents = inventory.result?.agents ?? inventory.agents ?? [];
+            const states = mailboxStates().map((file) =>
+              JSON.parse(readFileSync(file, "utf8")),
+            );
+            if (
+              states.some((state) =>
+                agents.some(
+                  (agent: Record<string, unknown>) =>
+                    agent.pane_id === state.paneId &&
+                    agent.agent_status === "working",
+                ),
+              )
+            )
+              break;
+            assert.ok(
+              attempt < 100,
+              `child working readiness missing: ${JSON.stringify(agents)}`,
+            );
+            await Bun.sleep(50);
+          }
+        }
+      }
+      return { call: value };
+    }
   }
   return { content: completion };
 }
 
 function childTurn(messages: Wire[]) {
+  if (interruptSmoke) {
+    if (requests.child === 1)
+      return { call: { name: "interrupt_block", args: {} } };
+    const userText = messages
+      .filter((m) => m.role === "user")
+      .map((m) => text(m.content))
+      .join("\n");
+    interruptReplacementObserved ||= userText.includes("INTERRUPT_REPLACEMENT");
+    for (const file of mailboxStates()) {
+      const state = JSON.parse(readFileSync(file, "utf8"));
+      assert.equal(
+        state.completedRequestId,
+        undefined,
+        "interrupted operation must not publish a result",
+      );
+      assert.equal(
+        existsSync(join(dirname(file), `result-${state.activeRequestId}.json`)),
+        false,
+        "cancelled operation must not create a result file",
+      );
+    }
+    if (requests.child === 2)
+      return { call: { name: "interrupt_checkpoint", args: {} } };
+    assert.ok(
+      interruptReplacementObserved,
+      "replacement must reach the provider before a natural whole-run stop",
+    );
+    return { content: "INTERRUPT_CHILD_DONE" };
+  }
   const last = messages.at(-1)!;
   const task = messages.findLast((m) => m.role === "user");
   if (last.role === "tool")
@@ -424,6 +533,14 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   async fetch(request) {
+    if (interruptSmoke && new URL(request.url).pathname === "/ready") {
+      interruptReady.resolve();
+      return new Response("ready");
+    }
+    if (interruptSmoke && new URL(request.url).pathname === "/cancelled") {
+      await releaseInterrupt.promise;
+      return new Response("released");
+    }
     try {
       const payload = (await request.json()) as {
         messages: Wire[];
@@ -615,6 +732,38 @@ try {
     managerSessionFile = String(seed.stdout).trim();
     assert.ok(existsSync(managerSessionFile));
   }
+  if (interruptSmoke) {
+    const probe = join(root, "interrupt-probe.ts");
+    await writeFile(
+      probe,
+      `
+export default function(pi) {
+  pi.registerTool({
+    name: "interrupt_block", label: "interrupt block", description: "Wait for cancellation",
+    parameters: {type:"object",properties:{}},
+    async execute(id, args, signal) {
+      const cancelled = Promise.withResolvers();
+      signal.addEventListener("abort", async () => {
+        await fetch(${JSON.stringify(new URL("cancelled", server.url).href)}, {method:"POST"});
+        cancelled.resolve({content:[{type:"text",text:"cancelled"}]});
+      }, {once:true});
+      await fetch(${JSON.stringify(new URL("ready", server.url).href)}, {method:"POST"});
+      return await cancelled.promise;
+    }
+  });
+  pi.registerTool({
+    name: "interrupt_checkpoint", label: "interrupt checkpoint", description: "Continue before natural settlement",
+    parameters: {type:"object",properties:{}},
+    async execute() { return {content:[{type:"text",text:"checkpoint"}]}; }
+  });
+}`,
+    );
+    await mkdir(join(paths.agent, "agents"), { recursive: true });
+    await writeFile(
+      join(paths.agent, "agents/interrupt-worker.md"),
+      `---\nname: interrupt-worker\nmodel: loopback/scripted\ntools: [interrupt_block, interrupt_checkpoint]\nnoBuiltinTools: true\nextensions: [${JSON.stringify(probe)}]\n---\n`,
+    );
+  }
   if (managerHandoff) {
     const probe = join(root, "policy-probe.ts");
     await writeFile(
@@ -800,7 +949,46 @@ export default function(pi) {
     );
     await Bun.sleep(500);
   }
-  if (projectContinuation) {
+  if (interruptSmoke) {
+    const delivered = ownerRecords.filter(
+      (r) =>
+        r.customType === "pi-herdsman-agent-result" ||
+        r.message?.customType === "pi-herdsman-agent-result",
+    );
+    assert.equal(delivered.length, 1);
+    const result = delivered[0].details ?? delivered[0].message?.details;
+    assert.equal(result.status, "completed");
+    assert.ok(result.responseEntryId);
+    assert.ok(interruptReplacementObserved);
+    assert.ok(
+      interruptPendingObserved,
+      "authoritative pending rejection reaches the native provider",
+    );
+    const controlResults = ownerRecords.filter(
+      (r) =>
+        r.type === "message" &&
+        r.message?.role === "toolResult" &&
+        ["steer_agent", "interrupt_agent"].includes(r.message.toolName),
+    );
+    assert.equal(
+      controlResults.filter((r) => r.message.details?.ok === false).length,
+      1,
+      "one deliberately rejected pending control; no retries",
+    );
+    assert.equal(
+      controlResults.find((r) => r.message.toolName === "interrupt_agent")
+        ?.message.details.delivery,
+      "accepted",
+    );
+    assert.equal(
+      requests.child,
+      3,
+      "block, checkpoint and replacement require three scripted model requests",
+    );
+    log(
+      `interrupt passed: replacement before natural settlement; ${JSON.stringify(requests)}`,
+    );
+  } else if (projectContinuation) {
     const tools = (name: string) =>
       ownerRecords.filter(
         (r) =>

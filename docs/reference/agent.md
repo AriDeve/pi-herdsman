@@ -313,7 +313,7 @@ stale episode means no qualifying execution boundary occurred, so a steer queued
 during that episode cannot yet have taken effect. Continue waiting only while
 existing evidence positively supports legitimate long-running work; otherwise
 use `interrupt_agent` to preempt the active Pi operation and continue the same
-assignment. It supersedes earlier undelivered steering. Use `close_agent` only
+assignment with replacement direction. Use `close_agent` only
 when abandoning the assignment is intended. Do not poll or create another
 delivery path for health attention.
 
@@ -507,16 +507,30 @@ to `reply_agent`; neither control bypasses the pending answer.
 `message`, and optional `files`. It is available only to the exact direct owner
 while the agent has a currently working Pi operation.
 
-Interrupt is preemptive: it requests Pi cancellation of the current operation,
-supersedes earlier steering Pi has not yet delivered, and continues the same
-managed generation and assignment using the replacement message. It does not
-create another assignment or terminal result and does not
-close or recreate the agent. Previous Pi-queued steering/follow-up input is
-removed from execution by Pi's native abort behavior and is not retained in the
-child editor.
+Interrupt requests native cancellation and continues the same managed generation
+and assignment with replacement direction. On OMP, Herdsman dispatches the
+replacement at native operation end, independently of whole-run settlement and
+pending-message emptiness. The interrupted operation cannot publish a terminal
+assignment result; ordinary continuation and pending-message guards still apply.
+It does not create another assignment or close/recreate the Agent.
 
-Cancellation uses Pi's native abort mechanism. Non-cooperative third-party
-tools may not stop immediately; `close_agent` remains the destructive fallback.
+The receipt's `delivery: "accepted"` confirms acceptance, not that the replacement
+has reached the model or been applied. Do not resend an accepted interrupt.
+OMP may run older queued steering or owner replies first: its public extension
+interface does not provide queue withdrawal or strict replacement priority.
+
+While replacement awaits dispatch, the child rejects steer/interrupt with
+`agent_busy`, `details.control_state: "interrupt_pending"`, and
+`details.unavailable_tools: ["steer_agent", "interrupt_agent"]`. This is an
+identity-validated observation at rejection, not durable live-state authority.
+The rejected control was not queued. Continue independent work or passively wait
+for the Agent response; no status roundtrip or automatic retry is required.
+`available_tools` remains advisory: lifecycle snapshots do not expose this
+child-local pending window, and every control revalidates current authority.
+
+Non-cooperative third-party tools may not stop immediately; replacement waits
+for the native operation-end event, not an arbitrary timeout. `close_agent`
+remains the destructive fallback when abandoning the assignment is intended.
 
 ## `reply_agent`
 

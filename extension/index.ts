@@ -696,7 +696,7 @@ export default function (pi: ExtensionAPI): void {
 }
 
 function registerHerdsman(pi: ExtensionAPI): void {
-  registerOmpRuntime(pi);
+  const ompRuntime = registerOmpRuntime(pi);
   const launchPolicy = registerOmpLaunchPolicy(pi);
   const appendEntry = pi.appendEntry.bind(pi);
   pi.appendEntry = (customType, data) => {
@@ -2376,6 +2376,7 @@ function registerHerdsman(pi: ExtensionAPI): void {
   }
   if (processRole !== "managed-agent") return;
   registerManagedAgentRuntime(pi, {
+    onOperationEnd: ompRuntime.onOperationEnd,
     build: HERDSMAN_BUILD,
     shellTimeoutSeconds: STALE_AFTER_MS / 1000,
     statusRuntime: leadStatusRuntime!,

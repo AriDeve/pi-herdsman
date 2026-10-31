@@ -689,7 +689,7 @@ test("managed interrupt continues the same assignment after abort settlement", a
       replacementSteer.requestId,
     );
     assert.equal(readAgentState(mailbox)?.lastAck?.accepted, false);
-    assert.equal(readAgentState(mailbox)?.lastAck?.code, "busy");
+    assert.equal(readAgentState(mailbox)?.lastAck?.code, "interrupt_pending");
     assert.equal(aborted, 1);
 
     agent.events.get("message_end")![0](

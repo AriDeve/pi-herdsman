@@ -50,6 +50,7 @@ export interface ManagedAgentState {
     accepted: boolean;
     code?:
       | "busy"
+      | "interrupt_pending"
       | "idle"
       | "invalid"
       | "identity"
@@ -650,6 +651,7 @@ function validate(
         throw new Error("Invalid acknowledgement");
       const codes = [
         "busy",
+        "interrupt_pending",
         "idle",
         "invalid",
         "identity",

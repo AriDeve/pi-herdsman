@@ -161,7 +161,7 @@ turn. For stale attention:
    steering queued during it cannot yet have affected the current operation.
    Do not repeat reads solely because of a reminder.
 6. Otherwise use `interrupt_agent` to abandon the current operation and continue
-   the same assignment; it supersedes earlier undelivered steering.
+   the same assignment with replacement direction.
 7. Use `close_agent` only when abandoning the assignment is intended.
 
 For other attention, use `read_agent_transcript` for persisted Pi conversation and tool
@@ -222,11 +222,14 @@ after the current assistant turn and its tool calls reach the steering boundary.
 Acceptance by Herdsman therefore does not mean the current operation has
 observed the steering message.
 
-`interrupt_agent` changes the same active assignment preemptively. It requests
-cancellation of the current Pi operation, supersedes earlier steering that Pi
-has not yet delivered, and supplies the replacement instruction that continues
-the same assignment. The generation, active task
-request, ownership, Pi session, and final-result obligation remain unchanged.
+`interrupt_agent` changes the same active assignment by requesting native
+cancellation and supplying replacement direction. OMP dispatches replacement at
+operation end without waiting for whole-run settlement; earlier native-queued
+input may still run first. Acceptance is not confirmation of application, so do
+not resend an accepted interrupt. A child-confirmed `interrupt_pending` rejection
+identifies steer/interrupt as temporarily unavailable, without persisting that
+transient state as authority. The generation, active task request, ownership,
+session, and final-result obligation remain unchanged.
 
 Neither action creates another assignment. `close_agent` is the operation that
 abandons the managed generation.

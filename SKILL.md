@@ -105,11 +105,12 @@ an in-flight model or tool operation; Pi may queue it until the current
 operation reaches a safe boundary.
 
 Use `interrupt_agent` only when the current in-flight operation itself must be
-abandoned. Interrupt is preemptive: it cancels the current Pi operation,
-supersedes any earlier steering that Pi has not yet delivered, and continues
-the same assignment with the required replacement message. Do not interrupt
-merely because an agent is slow or marked stale; inactivity is advisory and
-does not prove a hang.
+abandoned. It requests cancellation and continues the same assignment with the
+required replacement message. Acceptance is not proof of application; do not
+resend an accepted interrupt. Older OMP-queued input may run first. A correlated
+`interrupt_pending` rejection identifies temporarily unavailable controls; wait
+passively or continue independent work, without polling or retrying. Inactivity
+alone is advisory and does not prove a hang.
 
 Use `reply_agent` only to answer a valid outstanding `ask_owner` question. Use
 `close_agent` only for intentional teardown or abandonment.
@@ -360,8 +361,8 @@ Use the event's current `available_tools` as advisory snapshot authority;
 every action revalidates identity, ownership, and lifecycle. Use `read_agent_transcript`
 for persisted conversation and tool evidence, and `inspect_agent` for live
 terminal/process evidence. `steer_agent` is cooperative and non-preemptive;
-`interrupt_agent` cancels the current operation, supersedes earlier steering Pi has
-not yet delivered, and continues the same assignment.
+`interrupt_agent` requests cancellation and continues the same assignment with
+replacement direction.
 Do not add automatic interrupt, close, restart, or redelegation. Physical
 `unknown` remains fail-closed, has no mutation actions, and receives at most one
 attention event per unresolved episode. `settling` alone is not a generic

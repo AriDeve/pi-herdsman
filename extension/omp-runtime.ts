@@ -59,6 +59,38 @@ export function registerOmpRuntime(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let compactionReason = "manual";
   const compactionFailures: Handler[] = [];
+  let dispatchInterrupt: (() => boolean) | undefined;
+  const settlementHandlers: Array<{ name: string; handler: Handler }> = [];
+  on("agent_end", async (event, ctx) => {
+    // Native queue admission is asynchronous: dispatch itself makes this
+    // operation nonterminal, even before hasPendingMessages reflects it.
+    if (dispatchInterrupt?.()) return;
+    let failures: unknown[] | undefined;
+    for (const { name, handler } of settlementHandlers) {
+      if (event.willContinue || ctx.hasPendingMessages()) break;
+      const message = event.messages?.findLast(
+        (candidate) => candidate.role === "assistant",
+      );
+      const status = outcome(message);
+      try {
+        await handler(
+          {
+            ...event,
+            type: name,
+            outcome: status,
+            aborted: status === "aborted",
+          },
+          ctx,
+        );
+      } catch (error) {
+        (failures ??= []).push(error);
+      }
+    }
+    // Preserve native listener isolation without swallowing its diagnostics.
+    if (failures?.length === 1) throw failures[0];
+    if (failures)
+      throw new AggregateError(failures, failures.map(String).join("; "));
+  });
   on("session_start", (_event, ctx) => {
     context = ctx;
   });
@@ -90,22 +122,7 @@ export function registerOmpRuntime(pi: ExtensionAPI) {
     } else if (name === "turn_end") {
       on(name, (event, ctx) => handler(turnEvidence(event, ctx), ctx));
     } else if (name === "agent_settled" || name === "agent_before_settle") {
-      on("agent_end", (event, ctx) => {
-        if (event.willContinue || ctx.hasPendingMessages()) return;
-        const message = event.messages?.findLast(
-          (candidate) => candidate.role === "assistant",
-        );
-        const status = outcome(message);
-        return handler(
-          {
-            ...event,
-            type: name,
-            outcome: status,
-            aborted: status === "aborted",
-          },
-          ctx,
-        );
-      });
+      settlementHandlers.push({ name, handler });
     } else if (name === "session_before_fork") {
       on("session_before_branch", handler);
     } else if (name === "session_before_compact") {
@@ -175,4 +192,11 @@ export function registerOmpRuntime(pi: ExtensionAPI) {
         return run;
       },
     });
+  return {
+    // Dispatch is independent of whole-run settlement. A dispatched replacement
+    // makes this operation end nonterminal even before native queue admission.
+    onOperationEnd(handler: () => boolean) {
+      dispatchInterrupt = handler;
+    },
+  };
 }
