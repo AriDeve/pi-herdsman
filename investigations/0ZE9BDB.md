@@ -393,6 +393,74 @@ the transient control reason and suppress controls already known to be rejected.
 Do not clear the guard on elapsed time, invent success, add retries, or persist
 live process state as authority.
 
+### Native repair prerequisite: OMP 18.14.1
+
+The subsequent implementation attempt verified the installed native host rather
+than assuming the adapter gate was the only obstacle. Executable fingerprint:
+`02d76a0cfeee473ffa387f50cf0378b0de1c44684c83e67ca27ba4d717cfb0d0`.
+No production repair was made: the examined public extension contract does not
+provide the required queued-input supersession operation.
+
+The retained native probe uses a temporary extension and a loopback HTTP/SSE
+provider; it does not load Herdsman or resume historical Agents:
+
+```sh
+bun investigations/0ZE9BDB/native-interrupt.mjs
+bun investigations/0ZE9BDB/native-interrupt.mjs --expect-replacement-first
+```
+
+The first command exited 0 and reported `superseded: false`. The second exited 1
+on the replacement-order assertion. Both native children exited 0. Cancellation
+aborted the synthetic tool, but the first resumed provider request contained only
+`OLDER_OWNER_REPLY`; `REPLACEMENT` appeared in the following request. Replacement
+was sent unconditionally from native `agent_end`, without Herdsman's settlement
+filter. Therefore removing that filter alone does not establish correct ordering.
+The retained probe awaits older-message admission and checks
+`hasPendingMessages()` before cancellation. Earlier exploratory runs used a
+10 ms delay instead; their traces show delivery order but do not prove the
+queue-admission precondition. The corrected probe was rerun at all nine
+tested dispatch/delivery combinations with the same older-first result.
+
+Earlier native `turn_end` dispatch was also exercised at both the post-cancellation
+`toolUse` and aborted-assistant boundaries, each with `steer`, `followUp`, `aside`,
+and omitted delivery mode. All eight cases sent replacement before `agent_end`,
+yet the first resumed provider request still contained only older input. The
+retained probe selects these alternatives through `PROBE_STAGE=toolUse|aborted`
+and `PROBE_DELIVERY=steer|followUp|aside|default`.
+
+Installed runtime definitions and native reflection establish:
+
+- `ctx.abort()` is exposed, but its wiring does not withdraw queued input.
+- `ctx.agent` is a frozen identity record, not an agent-core control object.
+  It has no callable own properties or getters; its prototype is `Object.prototype`.
+- The complete `sendUserMessage` implementation consumes only `deliverAs` and
+  `attribution` options. None of the exposed modes supplies queue replacement.
+- Native queue withdrawal exists internally, but no supported extension-level
+  operation was found at these public boundaries. Private queue mutation was
+  neither invoked nor proposed as a Herdsman workaround.
+
+The required host operation must supersede queued input, including input already
+dequeued but not delivered, before cancellation permits auto-drain; then dispatch
+replacement after cancellation unwind. It must define later-arrival ordering
+separately from terminal settlement. A promise-returning abort alone is
+insufficient if old input resumes before its caller can supply replacement.
+
+Control projection remains part of the blocked repair. The pending replacement
+is child-local memory, while owner controls derive from lifecycle and mailbox
+signals. Best-effort pane metadata is not an authoritative control handshake.
+A projection-only patch must not turn persisted presentation into live authority
+or cache an owner-side pending bit without restoration and identity semantics.
+
+This narrows the current implementation blocker; it does not identify the exact
+historical native event sequence or prove every undocumented host facility absent.
+Input/context rewriting hooks (`input`, `context`, `before_agent_start`, and
+`before_provider_request`) were not tested as alternatives. Filtering provider
+messages alone would not establish queue withdrawal or coherent saved history;
+no such rewriting workaround is claimed to satisfy the repair contract.
+No passing-after repair evidence exists. Existing focused checks
+`extension/omp-runtime.test.ts` and `extension/agent-runtime.test.ts` passed
+88/88; that is compatibility evidence only.
+
 ## Evidence limits and next decision
 
 - Historical entries identify OMP 18.14.0. Current executable checks returned
@@ -410,11 +478,11 @@ live process state as authority.
   incident boundaries. These cannot be reconstructed from the saved conversation
   alone. No historical workloads were restarted to manufacture that evidence.
 
-Priority follow-up: verify the native cancellation/queue contract and implement
-the independently scoped interrupt-ordering/projection repair. Separately decide
-whether close-before-result continuation is a supported recovery path. Keep the
-managed empty-result cause open pending the missing lifecycle evidence or a
-native-host reproduction that distinguishes the demonstrated mechanisms.
+Priority follow-up: obtain the supported native cancellation/queue-supersession
+operation described above, then implement the interrupt-ordering/projection
+repair. Separately decide whether close-before-result continuation is supported.
+Keep the managed empty-result cause open pending the missing lifecycle evidence
+or a native-host reproduction that distinguishes the demonstrated mechanisms.
 
 These proposals preserve [durable intent versus transient state](../docs/adr/0002-persist-intent-and-derive-runtime-state.md)
 and [native integration ownership](../docs/adr/0008-prefer-native-pi-and-herdr-contracts.md).
@@ -422,11 +490,16 @@ They are not active ADR replacements or shipped behavior.
 
 ## Verification and retained artifacts
 
-The three retained scripts under `investigations/0ZE9BDB/` use temporary runtime
-roots and clean them on exit. They do not access the incident sessions, activate
-Agents, or call external models. Run them from the repository root with installed
-development dependencies. Exit 0 means the diagnostic expectations held, not that
-a defect was fixed.
+The three original synthetic scripts under `investigations/0ZE9BDB/` use
+temporary runtime roots and clean them on exit. They do not access incident
+sessions, activate Agents, or call external models. The additional
+`native-interrupt.mjs` launches a native OMP process with temporary HOME, agent,
+XDG, and working-directory roots and a loopback provider. It kills a still-running
+child before removing those roots on ordinary completion or failure.
+Run from the repository root with installed development dependencies; the native
+probe also requires `omp` on PATH. Diagnostic exit 0 is not a repair verdict:
+the native probe reports `superseded`, and `--expect-replacement-first` makes the
+required ordering assertion explicit.
 
 Review caught an isolation error in earlier outcome replays: an imported module
 cached the default Pi mailbox root before the fixture changed the environment.
