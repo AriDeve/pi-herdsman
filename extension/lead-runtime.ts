@@ -1438,7 +1438,7 @@ export function createLeadAgentEventRuntime(host: {
         systemPrompt.push(
           `${JSON.stringify(roster.definitions)}\n\n` +
             `This is the session-start definition snapshot. ` +
-            `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`,
+            `Use list_agents for live Agent state and list_agent_definitions to refresh Agent definitions after configuration changes.`,
         );
       return { systemPrompt };
     },
@@ -2780,7 +2780,10 @@ export function registerLeadRuntime(
   const ownedAgentManagementTools = (ctx: ExtensionContext): string[] =>
     hasOwnedRootAgents(ctx)
       ? AGENT_COORDINATION_TOOLS.filter(
-          (name) => name !== "delegate_agent" && name !== "continue_agent",
+          (name) =>
+            name !== "list_agent_definitions" &&
+            name !== "delegate_agent" &&
+            name !== "continue_agent",
         )
       : [];
   const supervisoryAgentTools = (
@@ -2788,7 +2791,12 @@ export function registerLeadRuntime(
     definition: AgentDefinition,
   ): string[] => {
     const discovery = definition.frontmatter.agents?.length
-      ? ["list_agents", "delegate_agent", "continue_agent"]
+      ? [
+          "list_agents",
+          "list_agent_definitions",
+          "delegate_agent",
+          "continue_agent",
+        ]
       : [];
     const management = ownedAgentManagementTools(ctx);
     // Reading saved evidence does not require permission to start new work.
@@ -2803,7 +2811,12 @@ export function registerLeadRuntime(
     if (!profile) return undefined;
     const permitted = new Set(
       supervisoryAgentTools(ctx, profile.definition).filter((name) => {
-        if (name !== "delegate_agent" && name !== "continue_agent") return true;
+        if (
+          name !== "list_agent_definitions" &&
+          name !== "delegate_agent" &&
+          name !== "continue_agent"
+        )
+          return true;
         const policy = rootDelegationPolicy();
         return policy === "all" || policy.size > 0;
       }),

@@ -4122,6 +4122,7 @@ test("a stray agent variable does not suppress the active Lead tool surface", as
   await lead.events.get("session_start")![0](undefined, fakeContext());
   assert.deepEqual(lead.pi.getActiveTools(), [
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",

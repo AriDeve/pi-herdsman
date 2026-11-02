@@ -1737,7 +1737,7 @@ test("installed faux provider requeues decisions and emits its terminal failure 
         model("terminal-error"),
         context("wait", {
           agent_definitions:
-            "<agent_definitions>[]\n\nThis is the session-start definition snapshot. Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.</agent_definitions>",
+            "<agent_definitions>[]\n\nThis is the session-start definition snapshot. Use list_agents for live Agent state and list_agent_definitions to refresh Agent definitions after configuration changes.</agent_definitions>",
         }),
       ),
     );

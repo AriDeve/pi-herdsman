@@ -168,6 +168,7 @@ test("managed Agent surfaces distinguish delegation capability from leaf access"
       "inspect_agent",
       "interrupt_agent",
       "list_agents",
+      "list_agent_definitions",
       "reply_agent",
       "steer_agent",
       "read_agent_transcript",
@@ -285,6 +286,7 @@ test("each Agent operation has its own schema without projection", () => {
   registerExtension!(pi.pi as never);
   const cases = [
     ["list_agents", {}, { agent: "target" }, []],
+    ["list_agent_definitions", {}, { agent: "target" }, []],
     [
       "delegate_agent",
       { definition: "scout", task: "work" },

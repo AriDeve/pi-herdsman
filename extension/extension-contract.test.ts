@@ -247,6 +247,7 @@ function assertPortableToolSchema(tool: any): void {
 const REGISTERED_ROLE_TOOLS = [
   ...[
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -272,6 +273,7 @@ const REGISTERED_ROLE_TOOLS = [
 
 const SEMANTIC_TOOL_CASES = [
   ["list_agents", {}, { agent: "x" }, []],
+  ["list_agent_definitions", {}, { agent: "x" }, []],
   [
     "delegate_agent",
     { definition: "scout", task: "work" },
@@ -421,6 +423,7 @@ test("semantic coordination tools expose exact strict object contracts", () => {
   }
   const labels: Record<string, string> = {
     list_agents: "list agents",
+    list_agent_definitions: "list agent definitions",
     delegate_agent: "delegate agent",
     continue_agent: "continue agent",
     steer_agent: "steer agent",
@@ -830,6 +833,7 @@ test("registered lead and unmanaged roles expose the correct surface", async () 
       "inspect_agent",
       "interrupt_agent",
       "list_agents",
+      "list_agent_definitions",
       "reply_agent",
       "steer_agent",
       "read_agent_transcript",
@@ -3806,7 +3810,7 @@ test("ordinary Lead startup receives the exact-session definition roster", async
     rosterPrompt.split("\n\nThis is the session-start definition snapshot.")[0],
   );
   const listResult = await pi.tools
-    .find((tool) => tool.name === "list_agents")!
+    .find((tool) => tool.name === "list_agent_definitions")!
     .execute("list", {}, undefined, undefined, context);
   assert.deepEqual(
     roster,
@@ -3916,7 +3920,7 @@ test("delegating agents receive only their allowed definition roster", async () 
     /\n/,
   );
   const listResult = await pi.tools
-    .find((tool) => tool.name === "list_agents")!
+    .find((tool) => tool.name === "list_agent_definitions")!
     .execute("list", {}, undefined, undefined, context);
   assert.deepEqual(
     roster,
@@ -3939,12 +3943,6 @@ test("delegating agents receive only their allowed definition roster", async () 
     }),
     false,
   );
-  assert.match(agentListTool.description, /list current owned Agent state/i);
-  assert.match(agentListTool.description, /Do not use for progress polling/i);
-  assert.doesNotMatch(
-    agentListTool.description,
-    /agent_(?:delegate|continue|steer|interrupt|reply|close|inspect|transcript)/,
-  );
   const sharedGuidance = agentListTool.promptGuidelines?.join(" ") ?? "";
   assert.match(
     sharedGuidance,
@@ -3960,6 +3958,7 @@ test("delegating agents receive only their allowed definition roster", async () 
   );
   for (const toolName of [
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",

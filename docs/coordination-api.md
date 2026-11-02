@@ -13,6 +13,7 @@ Use [Agent tools](reference/agent.md) for:
 
 ```text
 list_agents
+list_agent_definitions
 delegate_agent
 continue_agent
 steer_agent

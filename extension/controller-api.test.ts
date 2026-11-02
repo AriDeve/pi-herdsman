@@ -6374,8 +6374,13 @@ test("parent list hides disabled allowed definitions", async () => {
       undefined,
       context,
     );
+    assert.equal("agent_definitions" in listed.details, false);
+    const definitions = await pi.tools
+      .find((tool) => tool.name === "list_agent_definitions")!
+      .execute("definitions", {}, undefined, undefined, context);
+    assert.equal("agents" in definitions.details, false);
     assert.deepEqual(
-      listed.details.agent_definitions,
+      definitions.details.agent_definitions,
       [
         { name: "disabled-child", tools: "default", skills: "none" },
         { name: "enabled-child", tools: "default", skills: "none" },
@@ -6419,7 +6424,10 @@ test("parent list hides disabled allowed definitions", async () => {
       undefined,
       context,
     );
-    assert.deepEqual(afterDisable.details.agent_definitions, [
+    const definitionsAfterDisable = await pi.tools
+      .find((tool) => tool.name === "list_agent_definitions")!
+      .execute("definitions", {}, undefined, undefined, context);
+    assert.deepEqual(definitionsAfterDisable.details.agent_definitions, [
       { name: "enabled-child", tools: "default", skills: "none" },
     ]);
     const liveChild = afterDisable.details.agents.find(
@@ -8601,6 +8609,7 @@ test("registered lead exposes semantic tools and guards live controls", async ()
   );
   assert.deepEqual(accepting.pi.getActiveTools(), [
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -10302,7 +10311,7 @@ test("root discovery fails closed without policy and preserves explicit unrestri
         rootDelegationPolicy,
       } as any,
     );
-    return controller.action(context, { action: "list" } as any);
+    return controller.action(context, { action: "definitions" });
   };
   assert.deepEqual(
     (await discover()).agent_definitions,

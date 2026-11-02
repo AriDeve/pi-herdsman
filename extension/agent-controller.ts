@@ -696,6 +696,8 @@ function agentToolName(action: string): string {
   switch (action) {
     case "list":
       return "list_agents";
+    case "definitions":
+      return "list_agent_definitions";
     case "delegate":
       return "delegate_agent";
     case "continue":
@@ -723,7 +725,7 @@ export const AGENT_DEFINITION_ENTRY = "pi-herdsman-agent-definition";
 export const AGENT_EXECUTION_OWNERSHIP_GUIDANCE =
   "Each unresolved unit of work has one executor. Using delegate_agent transfers that assignment's execution ownership to the Agent until it resolves. After delegation succeeds, stop executing, inspecting, or analyzing that delegated scope locally; do not assign overlapping work. Continue only concrete, necessary work clearly outside the delegated scope that you still own.";
 export const AGENT_UNRESOLVED_GUIDANCE =
-  "Use list_agents when fresh Agent state or ownership is materially needed for a control or recovery decision, or to refresh the definition roster; do not use it for progress polling. " +
+  "Use list_agents when fresh Agent state or ownership is materially needed for a control or recovery decision; do not use it for progress polling. Use list_agent_definitions to refresh the roster for worker selection or configuration validation. " +
   "Follow current available_tools and revalidation: steer_agent queues a cooperative correction for Pi to deliver after the current assistant turn and its tool calls reach a steering boundary; it does not preempt the current operation. interrupt_agent requests cancellation and continues the same assignment with replacement direction. Acceptance is not proof of application; do not resend an accepted interrupt. " +
   "Use reply_agent only to answer that Agent's exact pending ask_owner question. close_agent destructively closes an eligible Agent generation. inspect_agent provides bounded live terminal/process evidence; read_agent_transcript provides bounded persisted conversation/tool evidence. " +
   "When Agent work is unresolved, handle required control, then continue only necessary work you still own or end the turn without concluding; results or attention resume the session automatically. Do not poll with status requests, sleep, or other waiting mechanisms. " +
@@ -2319,6 +2321,7 @@ export function visibleAgentCapabilities(
 
 export type Params =
   | { action: "list" }
+  | { action: "definitions" }
   | {
       action: "delegate";
       definition: string;
@@ -4474,15 +4477,20 @@ export function createAgentController(
     return {
       ok: true,
       agents: [...agents, ...unknown],
-      agent_definitions: scope
-        ? visibleAgentCapabilities(
-            await options.agentDefinitions(context),
-            scope,
-            options.rootDelegationPolicy?.() ?? new Set<string>(),
-          )
-        : [],
     };
   };
+  const definitionsAction = async (
+    context: ExtensionContext,
+  ): Promise<Record<string, unknown>> => ({
+    ok: true,
+    agent_definitions: options.scope
+      ? visibleAgentCapabilities(
+          await options.agentDefinitions(context),
+          options.scope,
+          options.rootDelegationPolicy?.() ?? new Set<string>(),
+        )
+      : [],
+  });
   const closeAction = async (
     context: ExtensionContext,
     agentLabel: string,
@@ -7791,7 +7799,7 @@ export function createAgentController(
           : []),
       ],
       description:
-        "List current owned Agent state and refresh the Agent-definition roster. Do not use for progress polling.",
+        "List visible live Agent state for control or recovery decisions. Do not use for progress polling.",
       executionMode: "sequential",
       parameters: agentListParameters,
       execute: async (
@@ -7812,7 +7820,7 @@ export function createAgentController(
           p = raw as Params;
           presentationAction = p.action;
           const value = await action(ctx, p, signal);
-          options.onChanged();
+          if (p.action !== "definitions") options.onChanged();
           if (
             controllerScope.kind === "root" &&
             (p.action === "delegate" || p.action === "continue") &&
@@ -7937,6 +7945,28 @@ export function createAgentController(
         update: unknown,
         ctx: ExtensionContext,
       ) => agentTool.execute(id, { action: "list" }, signal, update, ctx),
+    });
+    pi.registerTool({
+      ...agentTool,
+      name: "list_agent_definitions",
+      label: "list agent definitions",
+      description:
+        "Refresh the caller-scoped Agent-definition roster for worker selection or configuration validation.",
+      promptSnippet: undefined,
+      promptGuidelines: [],
+      execute: (
+        id: string,
+        _params: unknown,
+        signal: AbortSignal | undefined,
+        update: unknown,
+        ctx: ExtensionContext,
+      ) =>
+        agentTool.execute(id, { action: "definitions" }, signal, update, ctx),
+      renderCall: (...[a, t, c]: Parameters<typeof agentTool.renderCall>) =>
+        renderCoordinationCall("agent", "definitions", a, t, c),
+      renderResult: (
+        ...[r, o, t, c]: Parameters<typeof agentTool.renderResult>
+      ) => renderCoordinationResult("agent", "definitions", r, o, t, c),
     });
     pi.registerTool({
       ...agentTool,
@@ -8219,6 +8249,7 @@ export function createAgentController(
         },
       );
     if (scope.kind === "root") {
+      if (params.action === "definitions") return definitionsAction(ctx);
       if (params.action === "list") return listAction(ctx, signal);
       if (params.action === "close")
         return closeAction(ctx, params.agent, signal);
@@ -8251,6 +8282,7 @@ export function createAgentController(
         "Delegation controller is not initialized as an exact managed agent",
         "controller",
       );
+    if (params.action === "definitions") return definitionsAction(ctx);
     if (
       params.action === "list" ||
       params.action === "inspect" ||

@@ -22,7 +22,7 @@ Respect available tools, definition allowlists, ownership, and execution depth.
 If no suitable Agent exists, investigate and synthesize locally using permitted
 read-only capabilities; report any material capability gap.
 
-Start with the current `list_agents` roster when available. Refresh it if
+Start with the current `list_agent_definitions` roster when available. Refresh it if
 configuration changes. A configured child allowance does not guarantee that
 the child is available or that the current controller can delegate.
 

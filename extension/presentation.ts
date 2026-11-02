@@ -2234,12 +2234,19 @@ export function formatToolModelResult(
       ...cleanup,
     ].join("\n");
   }
+  if (action === "definitions") {
+    const definitions = Array.isArray(v.agent_definitions)
+      ? (v.agent_definitions as Record<string, unknown>[])
+      : [];
+    return definitions.length
+      ? ["Agent definitions:", ...formatAgentDefinitions(definitions)].join(
+          "\n",
+        )
+      : "Agent definitions: none";
+  }
   if (action === "list") {
     const agents = Array.isArray(v.agents)
       ? (v.agents as Record<string, unknown>[])
-      : [];
-    const definitions = Array.isArray(v.agent_definitions)
-      ? (v.agent_definitions as Record<string, unknown>[])
       : [];
     const roots = agents.filter((agent) => !value(agent.parent_label));
     const children = (parent: Record<string, unknown>) => {
@@ -2319,9 +2326,6 @@ export function formatToolModelResult(
             ...fallbackAgents.flatMap((agent) => agentLines(agent, "  ", true)),
             "",
           ]
-        : []),
-      ...(definitions.length
-        ? ["Agent definitions:", ...formatAgentDefinitions(definitions)]
         : []),
     ].join("\n");
   }
@@ -2483,11 +2487,13 @@ function coordinationHeader(
     tool === "agent"
       ? verb === "list"
         ? "list agents"
-        : verb === "transcript"
-          ? "read agent transcript"
-          : verb === "responses"
-            ? "read agent responses"
-            : `${verb} agent`
+        : verb === "definitions"
+          ? "list agent definitions"
+          : verb === "transcript"
+            ? "read agent transcript"
+            : verb === "responses"
+              ? "read agent responses"
+              : `${verb} agent`
       : tool === "staff"
         ? verb === "transcript"
           ? "read staff transcript"
@@ -2793,29 +2799,31 @@ function expandedResultLines(
     value(args.label) ||
     "agent";
   const heading =
-    action === "list"
-      ? tool === "staff"
-        ? "staff"
-        : tool === "peer"
-          ? "peer"
-          : "agents"
-      : action === "inspect"
-        ? `inspect ${display}`
-        : tool === "staff" && action === "remove"
-          ? "remove worktree"
-          : action === "delegate" || action === "continue"
-            ? `${display} started`
-            : tool === "supervisor"
-              ? "sent to supervisor"
-              : action === "steer"
-                ? "steering queued"
-                : action === "interrupt"
-                  ? "interrupt accepted"
-                  : tool === "agent" && action === "reply"
-                    ? `reply sent to ${display}`
-                    : action === "close"
-                      ? `${display} closed`
-                      : `${action} ${display}`;
+    action === "definitions" && tool === "agent"
+      ? "agent definitions"
+      : action === "list"
+        ? tool === "staff"
+          ? "staff"
+          : tool === "peer"
+            ? "peer"
+            : "agents"
+        : action === "inspect"
+          ? `inspect ${display}`
+          : tool === "staff" && action === "remove"
+            ? "remove worktree"
+            : action === "delegate" || action === "continue"
+              ? `${display} started`
+              : tool === "supervisor"
+                ? "sent to supervisor"
+                : action === "steer"
+                  ? "steering queued"
+                  : action === "interrupt"
+                    ? "interrupt accepted"
+                    : tool === "agent" && action === "reply"
+                      ? `reply sent to ${display}`
+                      : action === "close"
+                        ? `${display} closed`
+                        : `${action} ${display}`;
   const lines = [heading];
   const fields: Array<[string, unknown]> = [
     ["definition", details.definition ?? details.agent_definition],
@@ -2869,9 +2877,9 @@ function expandedResultLines(
     );
   }
   if (action === "list" && tool === "agent")
+    lines.push("", ...agentHierarchy(details));
+  if (action === "definitions" && tool === "agent")
     lines.push(
-      "",
-      ...agentHierarchy(details),
       ...(Array.isArray(details.agent_definitions) &&
       details.agent_definitions.length
         ? [
@@ -3123,6 +3131,16 @@ export function renderCoordinationResult(
     if (action === "list")
       return new WidthSafeText(
         humanText(theme, "toolTitle", agentListSummary(details)),
+        0,
+        0,
+      );
+    if (action === "definitions")
+      return new WidthSafeText(
+        humanText(
+          theme,
+          "toolTitle",
+          `agent definitions ${Array.isArray(details.agent_definitions) ? details.agent_definitions.length : 0}`,
+        ),
         0,
         0,
       );

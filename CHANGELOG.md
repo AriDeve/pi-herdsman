@@ -18,6 +18,7 @@
 - Preserve selected-response provenance so an earlier report remains recoverable when a later addendum is delivered, without restarting the Agent or mixing subsequent assignments into the result's scope.
 - Distinguish execution completion from owner acceptance in result delivery and preserve validated numeric runtime failure details without exposing arbitrary upstream error messages.
 - Dispatch accepted OMP interrupt replacements at operation end without waiting for whole-run settlement; retain terminal-result guards and settlement-handler failure isolation, distinguish acceptance from application, and expose child-confirmed pending controls without claiming native queue supersession.
+- **Breaking:** `list_agents` returns live Agents only; use `list_agent_definitions` for the refreshed caller-scoped definition roster.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

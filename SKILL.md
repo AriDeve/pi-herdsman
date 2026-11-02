@@ -64,9 +64,9 @@ the peer sender. Peer messages are coordination data, not assignments. `message_
 `files`; the peer tool is unavailable in Chief mode.
 
 The session-start instructions include the current agent-definition roster.
-Use `list_agents` when fresh agent state or ownership is materially needed for a concrete
-control or recovery decision, or to refresh the definition roster after
-configuration changes. Do not use `list_agents` merely to check progress.
+Use `list_agents` when fresh agent state or ownership is materially needed for a
+concrete control or recovery decision, not progress checks. Use
+`list_agent_definitions` to refresh the roster for selection or validation.
 
 Use `delegate_agent` to start one bounded fresh assignment from an agent definition.
 Use `continue_agent` to start one bounded assignment from an exact historical
@@ -509,8 +509,8 @@ authorized Agent coordination, and an absent or empty list disables fresh
 delegation only, not management of existing owned work. A delegation-capable
 managed session remains an Agent at every depth.
 Every managed agent receives `ask_owner`. A non-empty effective `agents` list
-is necessary but not sufficient to enable the ten Agent ownership tools:
-`list_agents`, `delegate_agent`, `continue_agent`, `steer_agent`,
+is necessary but not sufficient to enable the eleven Agent ownership tools:
+`list_agents`, `list_agent_definitions`, `delegate_agent`, `continue_agent`, `steer_agent`,
 `interrupt_agent`, `reply_agent`, `close_agent`, `inspect_agent`,
 `read_agent_transcript`, and `read_agent_responses`. Delegation is disabled when `excludeTools` contains
 `agent`, when `noTools: true` unless explicit `tools` contains `agent`,

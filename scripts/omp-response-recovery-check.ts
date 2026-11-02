@@ -37,6 +37,7 @@ const completion = interruptSmoke
       : "RECOVERY_SMOKE_DONE";
 const leadTools = [
   "list_agents",
+  "list_agent_definitions",
   "delegate_agent",
   "continue_agent",
   "steer_agent",
@@ -304,6 +305,8 @@ function* ownerProgram(): Generator<
       name: "steer_agent",
       args: { agent: "reviewer", message: "OLDER_OWNER_REPLY" },
     };
+    yield { name: "list_agents", args: {} };
+    yield { name: "list_agent_definitions", args: {} };
     yield {
       name: "interrupt_agent",
       args: { agent: "reviewer", message: "INTERRUPT_REPLACEMENT" },
@@ -389,7 +392,14 @@ async function ownerTurn(messages: Wire[], lead = false) {
           "delegate_agent",
           "continue_agent",
           "read_agent_responses",
-          ...(interruptSmoke ? ["steer_agent", "interrupt_agent"] : []),
+          ...(interruptSmoke
+            ? [
+                "steer_agent",
+                "interrupt_agent",
+                "list_agents",
+                "list_agent_definitions",
+              ]
+            : []),
         ];
   const results = messages.flatMap((message) => {
     const name =
@@ -817,6 +827,10 @@ export default function(pi) {
   // isolated agent directory (the installer refuses the shared Pi/OMP override).
   const home = join(root, "home");
   await mkdir(join(home, ".omp/agent/extensions"), { recursive: true });
+  await writeFile(
+    join(home, ".zshrc"),
+    "# Isolated noninteractive smoke shell.\n",
+  );
   const { PI_CODING_AGENT_DIR: _ignored, ...installEnv } = env;
   const installed = Bun.spawnSync(
     ["herdr", "--session", sessionName, "integration", "install", "omp"],
@@ -950,6 +964,35 @@ export default function(pi) {
     await Bun.sleep(500);
   }
   if (interruptSmoke) {
+    const listings = ownerRecords.filter(
+      (r) =>
+        r.type === "message" &&
+        r.message?.role === "toolResult" &&
+        ["list_agents", "list_agent_definitions"].includes(r.message.toolName),
+    );
+    const live = listings.find((r) => r.message.toolName === "list_agents")
+      ?.message.details;
+    const definitions = listings.find(
+      (r) => r.message.toolName === "list_agent_definitions",
+    )?.message.details;
+    assert.equal(live?.ok, true);
+    assert.ok(
+      live.agents.some(
+        (agent: { agent?: string }) => agent.agent === "reviewer",
+      ),
+    );
+    assert.equal("agent_definitions" in live, false);
+    assert.equal(definitions?.ok, true);
+    assert.ok(
+      definitions.agent_definitions.some(
+        (definition: { name?: string }) =>
+          definition.name === "interrupt-worker",
+      ),
+    );
+    assert.equal("agents" in definitions, false);
+    log(
+      `disjoint listings verified: live reviewer; definition interrupt-worker; live keys=${Object.keys(live).join(",")}; definition keys=${Object.keys(definitions).join(",")}`,
+    );
     const delivered = ownerRecords.filter(
       (r) =>
         r.customType === "pi-herdsman-agent-result" ||

@@ -796,6 +796,7 @@ const { createLeadToolState, sessionLeadExecutionState } =
 
 const leadTools = [
   "list_agents",
+  "list_agent_definitions",
   "delegate_agent",
   "continue_agent",
   "steer_agent",
@@ -2926,6 +2927,7 @@ function fakeChiefPi(options: Parameters<typeof fakePi>[0] = {}) {
           "grep",
           "foreign_tool",
           "list_agents",
+          "list_agent_definitions",
           "delegate_agent",
           "continue_agent",
           "steer_agent",
@@ -8987,6 +8989,7 @@ test("lead session-start retries an exact baseline after restoration fails", asy
   const baseline = [
     ...ordinaryBaseline,
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -9067,6 +9070,7 @@ test("lead session-start continues when chief lease release fails", async () => 
         "read",
         "bash",
         "list_agents",
+        "list_agent_definitions",
         "delegate_agent",
         "continue_agent",
         "steer_agent",
@@ -9093,6 +9097,7 @@ test("lead session-start continues when chief lease release fails", async () => 
     "read",
     "bash",
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -9153,6 +9158,12 @@ test("Chief activation preserves access to previously owned work", async () => {
   registerExtension!(pi.pi as never);
   await pi.events.get("session_start")![0](undefined, context);
   await pi.commandOptions.get("chief").handler("", context);
+  assert.ok(pi.pi.getActiveTools().includes("list_agents"));
+  assert.equal(
+    pi.pi.getActiveTools().includes("list_agent_definitions"),
+    false,
+    "management-only supervision must not expose worker discovery",
+  );
   assert.ok(
     !notices.some((message) => /owned agent work exists/.test(message)),
   );
@@ -10062,6 +10073,7 @@ test("Lead resume repairs stale staff from its durable displaced loadout", async
     "read",
     "bash",
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -10138,6 +10150,7 @@ test("ordinary branch tool state wins over an older lead checkpoint", async () =
           "read",
           "bash",
           "list_agents",
+          "list_agent_definitions",
           "delegate_agent",
           "continue_agent",
           "steer_agent",
@@ -10158,6 +10171,7 @@ test("ordinary branch tool state wins over an older lead checkpoint", async () =
     "read",
     "grep",
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -10535,6 +10549,7 @@ test("persisted chief resume isolates tools and restores its ordinary baseline",
           "bash",
           "foreign_tool",
           "list_agents",
+          "list_agent_definitions",
           "delegate_agent",
           "continue_agent",
           "steer_agent",
@@ -10576,6 +10591,7 @@ test("persisted chief resume isolates tools and restores its ordinary baseline",
     "bash",
     "foreign_tool",
     "list_agents",
+    "list_agent_definitions",
     "delegate_agent",
     "continue_agent",
     "steer_agent",
@@ -15318,19 +15334,21 @@ test("TUI status refresh consumes the coherent Herdr session snapshot", async (t
     /"name":\s*"agent"/,
     "session-start roster should be available to the Lead prompt",
   );
-  const listed = await agentTool(pi, "list").execute(
-    "id",
-    {},
-    undefined,
-    undefined,
-    context,
-  );
+  const callsBeforeDefinitionListing = calls.length;
+  const listed = await pi.tools
+    .find((tool) => tool.name === "list_agent_definitions")!
+    .execute("id", {}, undefined, undefined, context);
   assert.equal(listed.details.ok, true, JSON.stringify(listed.details));
+  assert.equal(
+    calls.length,
+    callsBeforeDefinitionListing,
+    "definition listing must not trigger live status inspection",
+  );
   assert.ok(
     listed.details.agent_definitions.some(
       (definition: any) => definition.name === "agent",
     ),
-    "list agents should continue to expose discovered definitions",
+    "definition listing should continue to expose discovered definitions",
   );
   await pi.events.get("session_shutdown")?.[0]();
 });

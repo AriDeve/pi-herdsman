@@ -2377,7 +2377,7 @@ export function registerManagedAgentRuntime(
         systemPrompt.push(
           `${JSON.stringify(availableRoster.definitions)}\n\n` +
             `This is the session-start definition snapshot. ` +
-            `Use list_agents for live Agent state or to refresh Agent definitions after configuration changes.`,
+            `Use list_agents for live Agent state and list_agent_definitions to refresh Agent definitions after configuration changes.`,
         );
     }
     return { systemPrompt };

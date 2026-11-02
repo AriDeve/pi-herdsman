@@ -2,10 +2,11 @@
 
 [Documentation index](../README.md) · [Coordination](../concepts/coordination.md)
 
-Managed-agent operations are exposed as ten distinct tools:
+Managed-agent operations are exposed as eleven distinct tools:
 
 ```text
 list_agents
+list_agent_definitions
 delegate_agent
 continue_agent
 steer_agent
@@ -163,19 +164,8 @@ prominent for a later `continue_agent` call.
 {}
 ```
 
-No selectors or other fields are accepted. A successful result includes the
-effective `agent_definitions` roster and visible agent records.
-
-`agent_definitions` is an enabled-only runtime capability summary, not a
-configuration-management interface. Each entry identifies the effective
-definition by exact name and exposes its effective description, configured
-ordinary-tool policy, explicit skills and native-skill-discovery status, and
-permitted direct child names only when delegation is supported. It omits
-disabled definitions, reserved role profiles, definitions with unavailable
-required children, and configuration-only details such as source paths,
-model/thinking settings, extension configuration, and raw policy switches.
-Configured tool policy does not establish which tools are installed or
-callable. Explicit skills are separate from Pi native skill discovery.
+No selectors or other fields are accepted. A successful result includes visible
+live agent records, not definition discovery.
 
 Each valid durable generation in the controller's proven ownership projection
 remains visible, including physically unresolved `unknown` and proven `lost`
@@ -232,10 +222,22 @@ reading a transcript, including while automatic question delivery waits for the
 owner to become idle. It does not grant control authority over descendants or
 replace invocation-time validation.
 
-The session-start instructions include the same scoped `agent_definitions`
-capability projection as `list_agents`; it is a stable startup snapshot.
-`list_agents` refreshes definition discovery and live agent records after
-configuration changes. Neither is a complete configuration view: inspect
+## `list_agent_definitions`
+
+The empty request `{}` refreshes discovery and returns `ok` and the scoped
+`agent_definitions` roster, without inspecting live assignments.
+The session-start instructions include the same capability projection as a
+stable startup snapshot. The roster is an enabled-only runtime capability
+summary, not a configuration-management interface. Each entry identifies the
+effective definition by exact name and exposes its effective description,
+configured ordinary-tool policy, explicit skills and native-skill-discovery
+status, and permitted direct child names only when delegation is supported.
+It omits disabled definitions, reserved role profiles, definitions with
+unavailable required children, and configuration-only details such as source
+paths, model/thinking settings, extension configuration, and raw policy switches.
+Configured tool policy does not establish which tools are installed or
+callable. Explicit skills are separate from Pi native skill discovery.
+Neither roster is a complete configuration view: inspect
 bundled, trusted project, and global Markdown layers to identify contributing
 files and resolve effective configuration. Use frontmatter `name` as the
 definition identity, never a filename. Disabled definitions, definitions with
@@ -424,7 +426,7 @@ conversation and tool evidence.
 
 `files` is valid on `delegate_agent`, `continue_agent`, `steer_agent`,
 `interrupt_agent`, and `reply_agent`; it is not valid on `list_agents`,
-`close_agent`, `inspect_agent`, `read_agent_transcript`, or `read_agent_responses`. It accepts
+`list_agent_definitions`, `close_agent`, `inspect_agent`, `read_agent_transcript`, or `read_agent_responses`. It accepts
 ordinary paths,
 reusable direct-agent refs such as `result:researcher#1`, and canonical
 `result:<request-id>` refs already supplied as evidence. Semantic refs use the

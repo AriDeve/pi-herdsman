@@ -1926,6 +1926,7 @@ test("coordination prose source mapping covers agent, chief, and staff actions",
 test("coordination call titles use action-first natural targets", () => {
   const cases = [
     ["agent", "list", "list agents"],
+    ["agent", "definitions", "list agent definitions"],
     ["agent", "delegate", "delegate agent"],
     ["agent", "continue", "continue agent"],
     ["agent", "steer", "steer agent"],
@@ -4675,9 +4676,8 @@ test("Agent definition skills remain readable, deduplicated, and width-safe", (t
 test("List output preserves definitions and agent action state", (t) => {
   {
     assert.match(
-      formatToolModelResult("list", {
+      formatToolModelResult("definitions", {
         ok: true,
-        agents: [],
         agent_definitions: [
           { name: "reviewer", description: "Final independent review" },
         ],
@@ -4996,9 +4996,8 @@ test("Capability summaries preserve deterministic tool and skill policy output",
 
   {
     assert.match(
-      formatToolModelResult("list", {
+      formatToolModelResult("definitions", {
         ok: true,
-        agents: [],
         agent_definitions: [{ name: "delegate" }],
       }),
       /Agent definitions:\n  delegate \| tools default \| skills none/,

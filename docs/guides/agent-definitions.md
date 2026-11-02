@@ -56,7 +56,7 @@ definition overlays it. An unmatched definition is standalone.
 Definition configuration and runtime Agent discovery are separate views. The
 Definitions UI and Markdown files expose editable configuration and source
 layers. The session-start `agent_definitions` capability summary and
-`list_agents` result expose only definitions currently available to that
+`list_agent_definitions` result expose only definitions currently available to that
 controller, not source paths or complete frontmatter. They support runtime
 selection and validation, not configuration management. Identify definitions
 by frontmatter `name`, inspect contributing files, and resolve effective
@@ -242,16 +242,16 @@ path resolution rules.
 
 References are resolved from the Markdown file that declares them.
 
-Startup discovery and `list_agents` provide runtime Agent capabilities, not a
+Startup discovery and `list_agent_definitions` provide runtime Agent capabilities, not a
 complete configuration view. For their exact contract, see the
-[`list_agents` reference](../reference/agent.md#list_agents); use the workflow
+[`list_agent_definitions` reference](../reference/agent.md#list_agent_definitions); use the workflow
 below to inspect and manage definition configuration.
 
 For configuration management, inspect bundled, trusted project, and global
 Markdown layers in precedence order (`bundled < project < global`), identify
 the target by frontmatter `name`, resolve overlays, and edit the smallest
 correct project or global file. Never edit bundled definitions. Use
-`list_agents` after an edit when available to invoke normal discovery and
+`list_agent_definitions` after an edit when available to invoke normal discovery and
 validation, but do not treat its reduced summary as the full effective
 configuration or claim runtime validation when the tool is unavailable.
 
@@ -274,7 +274,7 @@ or the model can use:
 
 Both use effective definition discovery, but the Definitions UI exposes
 configuration (including disabled definitions and reserved role profiles where
-applicable), while `list_agents` returns only currently available capabilities
+applicable), while `list_agent_definitions` returns only currently available capabilities
 within the caller's scope.
 
 For model-assisted definition management, ask Pi directly or explicitly invoke
