@@ -85,7 +85,7 @@ function overlay(args: string[]): {
   return JSON.parse(readFileSync(flagValue(args, "--config"), "utf8"));
 }
 
-test("managed Lead precreation keeps the assigned identity beneath its exact creating transcript", () => {
+test("managed session precreation keeps readable names and exact identity beneath its creating transcript", () => {
   const parentId = "11111111-1111-4111-8111-111111111111";
   const childId = "22222222-2222-4222-8222-222222222222";
   const parentPath = join(root, `parent_${parentId}.jsonl`);
@@ -103,27 +103,61 @@ test("managed Lead precreation keeps the assigned identity beneath its exact cre
     getSessionId: () => parentId,
     getSessionFile: () => parentPath,
   };
-  const path = createOmpSessionFile(root, childId, parent);
+  const path = createOmpSessionFile(root, childId, parent, [
+    "lead",
+    "feature/readable traces",
+  ]);
   temporaryPaths.push(path);
   assert.equal(join(path, ".."), parentPath.slice(0, -6));
   const header = sdk.parseSessionEntries(readFileSync(path, "utf8"))[0];
   assert.equal(header.type, "session");
   assert.equal(header.id, childId);
   assert.equal(header.cwd, root);
+  assert.equal(basename(path), `lead_feature_readable_traces_${childId}.jsonl`);
   assert.throws(
     () =>
-      createOmpSessionFile(root, childId, {
-        ...parent,
-        getSessionId: () => childId,
-      }),
+      createOmpSessionFile(root, childId, parent, [
+        "lead",
+        "feature/readable traces",
+      ]),
+    /EEXIST/,
+  );
+  for (const [definition, name] of [
+    ["scout", "../escape / café 中文"],
+    ["x".repeat(1000), "y".repeat(1000)],
+    ["   ", ""],
+  ]) {
+    const id = crypto.randomUUID();
+    const safePath = createOmpSessionFile(root, id, parent, [definition, name]);
+    assert.equal(join(safePath, ".."), parentPath.slice(0, -6));
+    assert.match(basename(safePath), /^[A-Za-z0-9_-]+\.jsonl$/);
+    assert.ok(basename(safePath).length <= 172);
+    assert.ok(safePath.endsWith(`_${id}.jsonl`));
+  }
+  assert.throws(
+    () =>
+      createOmpSessionFile(
+        root,
+        childId,
+        {
+          ...parent,
+          getSessionId: () => childId,
+        },
+        ["lead", "project"],
+      ),
     /identity/i,
   );
   assert.throws(
     () =>
-      createOmpSessionFile(root, childId, {
-        ...parent,
-        getSessionFile: () => undefined,
-      }),
+      createOmpSessionFile(
+        root,
+        childId,
+        {
+          ...parent,
+          getSessionFile: () => undefined,
+        },
+        ["lead", "project"],
+      ),
     /session/i,
   );
 });

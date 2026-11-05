@@ -8035,6 +8035,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
                 cwd!,
                 assignment.id,
                 ctx.sessionManager,
+                ["lead", assignment.branch],
               ),
             };
             writeProjectAssignment(runtime, assignment);

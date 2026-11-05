@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureDashboard } from "./omp-dashboard-capture.mjs";
 import type { Subprocess } from "bun";
@@ -604,6 +604,15 @@ try {
     (r) => r.type === "session",
   )?.id;
   assert.ok(assignedSession);
+  for (const [session, name] of [
+    [lead, "lead_trace-project"],
+    [worker, "trace-worker_worker"],
+    [leaf, "trace-leaf_nested"],
+  ] as const) {
+    const id = session.records.find((r) => r.type === "session")?.id;
+    assert.ok(id);
+    assert.equal(basename(session.file), `${name}_${id}.jsonl`);
+  }
   if (failedLaunchIdentity) {
     assert.equal(
       assignedSession,

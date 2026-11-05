@@ -790,6 +790,7 @@ import support, {
   setLeadEnvironment,
   setAgentEnvironment,
   startupExecutor,
+  launchedSession,
   stopSummary,
   testGate,
   visibleWidth,
@@ -16176,15 +16177,6 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
     setLeadEnvironment();
     resetAgentMailbox(mailbox);
     updateConfig("spawnPlacement", "subtree");
-    sessionPath = join(tmpdir(), `pi-herdsman-${label}-${randomUUID()}.jsonl`);
-    realFs.writeFileSync(
-      sessionPath,
-      JSON.stringify({
-        type: "session",
-        id: DEFAULT_PI_SESSION_ID,
-      }),
-      "utf8",
-    );
     hadAgentsDir = realFs.existsSync(agentsDir);
     hadDefinition = realFs.existsSync(definitionPath);
     previousDefinition = hadDefinition
@@ -16402,6 +16394,13 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
             code: 0,
           };
         if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
+          const session = launchedSession(
+            args,
+            DEFAULT_PI_SESSION_ID,
+            sessionPath,
+          );
+          sessionPath = session.path;
+          herdrAgent.agent_session.value = session.path;
           live = true;
           writeAgentState(mailbox, {
             version: 5,
@@ -16411,7 +16410,7 @@ test("fresh assignment refreshes the widget after validation", async (t) => {
             workspaceId: WORKSPACE,
             agentLabel: label,
             paneId: "startup-pane",
-            piSessionId: DEFAULT_PI_SESSION_ID,
+            piSessionId: session.id,
             piSessionFile: sessionPath,
             cwd: requestedCwd,
             updatedAt: Date.now(),

@@ -1178,7 +1178,7 @@ export async function agentLaunchArgs(
   return args;
 }
 
-/** Precreate the session identity required by a durable Manager assignment. */
+/** Precreate an exact managed session; OMP owns all subsequent writes. */
 export function createOmpSessionFile(
   cwd: string,
   id: string,
@@ -1186,13 +1186,16 @@ export function createOmpSessionFile(
     ExtensionContext["sessionManager"],
     "getSessionId" | "getSessionFile"
   >,
+  names: readonly [string, string],
 ): string {
   const directory = nativeSessionFile(parent).slice(0, -6);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const path = join(
-    directory,
-    `${new Date().toISOString().replace(/[:.]/gu, "-")}_${id}.jsonl`,
-  );
+  const human = names
+    .map(
+      (name) => name.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 64) || "session",
+    )
+    .join("_");
+  const path = join(directory, `${human}_${id}.jsonl`);
   writeFileSync(
     path,
     `${JSON.stringify({

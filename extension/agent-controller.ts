@@ -139,6 +139,7 @@ import { readEffectiveConfig } from "./config.ts";
 import {
   contextAgentDefinitions,
   agentLaunchArgs,
+  createOmpSessionFile,
   agentDefinitionEnabled,
   agentDefinitionDelegationEnabled,
   agentDefinitionMetadata,
@@ -7049,6 +7050,7 @@ export function createAgentController(
         let promptWriteFailed = false;
         let started: StartedHerdrAgent | undefined;
         let accepted = false;
+        let createdSession: { id: string; path: string } | undefined;
         const preparedBootstrap: Array<{
           id: string;
           commit?: () => void | Promise<void>;
@@ -7199,10 +7201,15 @@ export function createAgentController(
               throw new Error(
                 "Native creating session identity changed before Agent launch",
               );
-            sessionArgs.push(
-              "--session-dir",
-              nativeSessionFile(ctx.sessionManager).slice(0, -6),
+            const id = randomUUID();
+            const path = createOmpSessionFile(
+              agentCwd,
+              id,
+              ctx.sessionManager,
+              [agentDefinition, label],
             );
+            createdSession = { id, path };
+            sessionArgs.push("--resume", path);
           }
           started = await startHerdrAgent(pi, ctx, {
             label,
@@ -7331,8 +7338,9 @@ export function createAgentController(
             runId: state.runId,
             ownerSessionId: owner,
             mailboxPath: mailbox,
-            piSessionId: state.piSessionId,
-            piSessionFile: state.piSessionFile,
+            piSessionId: createdSession?.id ?? resumed?.id ?? state.piSessionId,
+            piSessionFile:
+              createdSession?.path ?? resumed?.path ?? state.piSessionFile,
             agentDefinition,
             model: started.agent?.model ?? null,
             thinking: started.agent?.thinking ?? null,
@@ -7577,6 +7585,19 @@ export function createAgentController(
           } catch (rollbackFailure) {
             rollbackError = rollbackFailure;
             markRetryAttempted(rollbackFailure);
+          }
+          try {
+            if (createdSession && started?.launchMayHaveStarted === false)
+              unlinkSync(createdSession.path);
+          } catch (cleanupFailure) {
+            rollbackError = rollbackError
+              ? new Error(
+                  `${String(rollbackError)}; transcript cleanup: ${String(cleanupFailure)}`,
+                )
+              : cleanupFailure;
+          }
+          if (rollbackError) {
+            const rollbackFailure = rollbackError;
             const cleanupCause = {
               category: "internal_failure" as const,
               message: String(rollbackFailure),

@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { mock, test } from "node:test";
@@ -2208,13 +2209,7 @@ test("fixture mailbox consumer retries a failed acknowledgement callback", async
 test("fresh path sessions remain controllable after controller cache loss", async () => {
   setLeadEnvironment();
   const label = "agent";
-  const sessionPath = join(testTmpRoot, "registered-agent.jsonl");
-  realFs.rmSync(sessionPath, { force: true });
-  realFs.writeFileSync(
-    sessionPath,
-    JSON.stringify({ type: "session", id: DEFAULT_PI_SESSION_ID }),
-    "utf8",
-  );
+  let sessionPath = "";
   const startup = startupExecutor(
     label,
     () => DEFAULT_PI_SESSION_ID,
@@ -2245,6 +2240,8 @@ test("fresh path sessions remain controllable after controller cache loss", asyn
   };
   const pi = fakePi({
     exec: async (command, args, options) => {
+      if (command === "herdr" && args[0] === "agent" && args[1] === "start")
+        sessionPath = args[args.indexOf("--resume") + 1]!;
       const result = await startup.exec(command, args, options);
       return command === "herdr" && args[0] === "agent"
         ? pathSession(result)
@@ -8629,10 +8626,7 @@ test("session continuation starts a new agent generation with current prompt con
       ),
     );
     assert.ok(launchedEnvironment.includes("PI_HERDSMAN_OWNER_DISPLAY=lead"));
-    assert.equal(result.details.session_path, "/tmp/registered-agent.jsonl");
-    assert.ok(
-      !JSON.stringify(result.content).includes("/tmp/registered-agent.jsonl"),
-    );
+    assert.equal(result.details.session_path, session.path);
     assert.equal((result.details as any).reusable, undefined);
     assert.equal((result.details as any).keepAlive, undefined);
     const state = readAgentState(startup.mailbox)!;
@@ -9921,20 +9915,21 @@ test("assignment launch handles delayed official Pi session identity", async () 
       label: "delayed-session-agent",
       task: "delayed identity",
       session: (count: number) => (count < 3 ? null : expectedSession),
-      expectedCount: 4,
       retry: false,
     },
     {
       label: "null-session-agent",
       task: "retry null identity",
       session: (count: number) => (count === 1 ? null : expectedSession),
-      expectedCount: 3,
       retry: true,
     },
   ];
 
-  for (const { label, task, session, expectedCount, retry } of cases) {
+  for (const { label, task, session, retry } of cases) {
     setLeadEnvironment();
+    let allocatedPath = "";
+    let allocatedId = "";
+    const observations: Array<string | null> = [];
     const startup = startupExecutor(
       label,
       session,
@@ -9942,7 +9937,27 @@ test("assignment launch handles delayed official Pi session identity", async () 
       undefined,
       retry,
     );
-    const pi = fakePi({ exec: startup.exec });
+    const pi = fakePi({
+      exec: (command, args, options) => {
+        const result = startup.exec(command, args, options);
+        if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
+          allocatedPath = args[args.indexOf("--resume") + 1]!;
+          allocatedId = JSON.parse(
+            realFs.readFileSync(allocatedPath, "utf8").split("\n")[0],
+          ).id;
+        }
+        if (
+          command === "herdr" &&
+          args[0] === "agent" &&
+          args[1] === "get" &&
+          args[2] === "startup-pane"
+        )
+          observations.push(
+            JSON.parse(result.stdout).result.agent.agent_session?.value ?? null,
+          );
+        return result;
+      },
+    });
     registerExtension!(pi.pi as never);
     await pi.events.get("session_start")![0](undefined, fakeContext());
     try {
@@ -9954,14 +9969,22 @@ test("assignment launch handles delayed official Pi session identity", async () 
         fakeContext(),
       );
       assert.equal(result.details.ok, true, JSON.stringify(result.details));
-      assert.equal(startup.getCount(), expectedCount);
-      assert.equal(result.details.session_id, expectedSession);
+      assert.ok(allocatedPath);
+      assert.ok(allocatedId);
+      assert.equal(result.details.session_path, allocatedPath);
+      assert.equal(result.details.session_id, allocatedId);
+      assert.equal(observations[0], null);
+      assert.ok(
+        observations.includes(allocatedId),
+        "identity becomes observable during grace",
+      );
       if (!retry)
         assert.equal(
           pi.calls.some((args) => isPreservePaneStop(args)),
           false,
         );
     } finally {
+      startup.stopMailboxConsumer();
       pi.events.get("session_shutdown")?.[0]();
       resetAgentMailbox(startup.mailbox);
     }
@@ -10130,6 +10153,291 @@ test("managed startup cleanup releases delegation lock after observation failure
     undefined,
     "fixture cleanup must leave no mailbox state after delegation settles",
   );
+});
+
+test("prelaunch failure removes only its newly allocated transcript", async () => {
+  setLeadEnvironment();
+  const label = `prelaunch-${randomUUID().slice(0, 8)}`;
+  const context = fakeContext();
+  const directory = context.sessionManager.getSessionFile()!.slice(0, -6);
+  realFs.mkdirSync(directory, { recursive: true });
+  const sibling = join(directory, `sibling-${randomUUID()}.jsonl`);
+  realFs.writeFileSync(sibling, "preserve");
+  let allocated = "";
+  let submitted = false;
+  const startup = startupExecutor(
+    label,
+    () => DEFAULT_PI_SESSION_ID,
+    undefined,
+    () => {
+      submitted = true;
+    },
+  );
+  const pi = fakePi({
+    exec: (command, args, options) => {
+      if (command === "herdr" && args[0] === "pane" && args[1] === "run") {
+        const matches = realFs
+          .readdirSync(directory)
+          .filter((name) => name.startsWith(`agent_${label}_`));
+        assert.equal(matches.length, 1);
+        allocated = join(directory, matches[0]);
+        throw new Error("injected prelaunch failure");
+      }
+      return startup.exec(command, args, options);
+    },
+  });
+  registerExtension!(pi.pi as never);
+  await pi.events.get("session_start")![0](undefined, context);
+  try {
+    const result = await registeredAgentTool(pi, "delegate").execute(
+      "id",
+      { definition: "agent", label, task: "must not start" },
+      undefined,
+      undefined,
+      context,
+    );
+    assert.equal(result.details.ok, false);
+    assert.ok(allocated);
+    assert.equal(
+      pi.calls.some((args) => args[0] === "agent" && args[1] === "start"),
+      false,
+    );
+    assert.equal(submitted, false);
+    assert.equal(
+      realFs.existsSync(allocated),
+      false,
+      "prelaunch header must not become a phantom child",
+    );
+    assert.equal(realFs.readFileSync(sibling, "utf8"), "preserve");
+  } finally {
+    startup.stopMailboxConsumer();
+    pi.events.get("session_shutdown")?.[0]();
+    resetAgentMailbox(startup.mailbox);
+    if (allocated) realFs.rmSync(allocated, { force: true });
+    realFs.rmSync(sibling, { force: true });
+  }
+});
+
+test("prelaunch transcript cleanup failure is reported as rollback failure", async () => {
+  setLeadEnvironment();
+  const label = `cleanup-error-${randomUUID().slice(0, 8)}`;
+  const context = fakeContext();
+  const directory = context.sessionManager.getSessionFile()!.slice(0, -6);
+  let allocated = "";
+  const startup = startupExecutor(label, () => DEFAULT_PI_SESSION_ID);
+  const pi = fakePi({
+    exec: (command, args, options) => {
+      if (command === "herdr" && args[0] === "pane" && args[1] === "run") {
+        allocated = join(
+          directory,
+          realFs
+            .readdirSync(directory)
+            .find((name) => name.startsWith(`agent_${label}_`))!,
+        );
+        realFs.unlinkSync(allocated);
+        realFs.mkdirSync(allocated);
+        throw new Error("injected prelaunch failure");
+      }
+      return startup.exec(command, args, options);
+    },
+  });
+  registerExtension!(pi.pi as never);
+  await pi.events.get("session_start")![0](undefined, context);
+  try {
+    const result = await registeredAgentTool(pi, "delegate").execute(
+      "id",
+      { definition: "agent", label, task: "must not start" },
+      undefined,
+      undefined,
+      context,
+    );
+    assert.equal(result.details.error.category, "rollback_failure");
+    assert.match(
+      result.details.error.primary.message,
+      /injected prelaunch failure/,
+    );
+    assert.match(result.details.error.cleanup.message, /EISDIR|EPERM/);
+    assert.ok(
+      pi.entries.some(
+        (entry) => entry.customType === "pi_herdsman_cleanup_error",
+      ),
+    );
+  } finally {
+    startup.stopMailboxConsumer();
+    pi.events.get("session_shutdown")?.[0]();
+    resetAgentMailbox(startup.mailbox);
+    if (allocated) realFs.rmSync(allocated, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle release failure after startup retains the allocated transcript", async (t) => {
+  setLeadEnvironment();
+  const label = `release-failure-${randomUUID().slice(0, 8)}`;
+  let allocated = "";
+  let submitted = false;
+  let committed = false;
+  const startup = startupExecutor(
+    label,
+    () => DEFAULT_PI_SESSION_ID,
+    undefined,
+    () => {
+      submitted = true;
+    },
+    false,
+    undefined,
+    "/tmp",
+    AGENT_ID,
+    false,
+    true,
+  );
+  const pi = fakePi({
+    exec: (command, args, options) => {
+      const result = startup.exec(command, args, options);
+      if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
+        allocated = args[args.indexOf("--resume") + 1]!;
+        const originalRmdir = realFs.default.rmdirSync;
+        const lockName = createHash("sha256").update(WORKSPACE).digest("hex");
+        t.mock.method(realFs.default, "rmdirSync", (path: string) => {
+          if (path.includes(`.${lockName}.`) && path.endsWith(".released"))
+            throw new Error("injected lifecycle release failure");
+          return originalRmdir(path);
+        });
+        syncBuiltinESMExports();
+      }
+      return result;
+    },
+  });
+  pi.pi.events.on(MANAGED_AGENT_BOOTSTRAP_EVENT, (event) => {
+    event.register("release-check", () => ({
+      payload: "prepared",
+      commit: () => {
+        committed = true;
+      },
+    }));
+  });
+  registerExtension!(pi.pi as never);
+  const context = fakeContext();
+  await pi.events.get("session_start")![0](undefined, context);
+  try {
+    const result = await registeredAgentTool(pi, "delegate").execute(
+      "id",
+      { definition: "agent", label, task: "must not be accepted" },
+      undefined,
+      undefined,
+      context,
+    );
+    assert.ok(allocated);
+    assert.equal(result.details.ok, false);
+    assert.match(
+      JSON.stringify(result.details.error),
+      /injected lifecycle release failure/,
+    );
+    assert.equal(committed, false);
+    assert.equal(submitted, false);
+    assert.equal(
+      realFs.existsSync(allocated),
+      true,
+      "unknown launch outcome must retain native history",
+    );
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    startup.stopMailboxConsumer();
+    pi.events.get("session_shutdown")?.[0]();
+    resetAgentMailbox(startup.mailbox);
+  }
+});
+
+test("fresh startup rejects a mailbox that substitutes the preallocated session identity", async () => {
+  for (const field of ["piSessionId", "piSessionFile"] as const) {
+    setLeadEnvironment();
+    const label = `substituted-${field.toLowerCase()}`;
+    let submitted = false;
+    let bootstrapCommitted = false;
+    let originalPath = "";
+    let originalValue = "";
+    const replacement =
+      field === "piSessionId"
+        ? randomUUID()
+        : join(testTmpRoot, "substituted.jsonl");
+    const startup = startupExecutor(
+      label,
+      () => DEFAULT_PI_SESSION_ID,
+      undefined,
+      () => {
+        submitted = true;
+      },
+      false,
+      undefined,
+      "/tmp",
+      AGENT_ID,
+      false,
+      true,
+    );
+    const pi = fakePi({
+      exec: async (command, args, options) => {
+        const result = await startup.exec(command, args, options);
+        if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
+          const state = readAgentState(startup.mailbox)!;
+          originalPath = state.piSessionFile!;
+          originalValue = state[field]!;
+          if (field === "piSessionFile")
+            realFs.copyFileSync(originalPath, replacement);
+          writeAgentState(startup.mailbox, {
+            ...state,
+            [field]: replacement,
+          });
+        }
+        return originalValue
+          ? {
+              ...result,
+              stdout: result.stdout.replaceAll(originalValue, replacement),
+            }
+          : result;
+      },
+    });
+    pi.pi.events.on(MANAGED_AGENT_BOOTSTRAP_EVENT, (event) => {
+      event.register("identity-check", () => ({
+        payload: "prepared",
+        commit: () => {
+          bootstrapCommitted = true;
+        },
+      }));
+    });
+    registerExtension!(pi.pi as never);
+    await pi.events.get("session_start")![0](undefined, fakeContext());
+    try {
+      const result = await registeredAgentTool(pi, "delegate").execute(
+        "substituted",
+        { definition: "agent", label, task: "must not reach the Agent" },
+        undefined,
+        undefined,
+        fakeContext(),
+      );
+      assert.equal(
+        bootstrapCommitted,
+        false,
+        "unaccepted identity cannot commit bootstrap effects",
+      );
+      assert.equal(result.details.ok, false);
+      assert.equal(submitted, false);
+      assert.equal(
+        result.details.error.primary?.category ?? result.details.error.category,
+        "target_not_found",
+        JSON.stringify(result.details),
+      );
+      assert.equal(result.details.error.rollbackOccurred, true);
+      assert.equal(
+        realFs.existsSync(originalPath),
+        true,
+        "rollback retains native history",
+      );
+    } finally {
+      startup.stopMailboxConsumer();
+      pi.events.get("session_shutdown")?.[0]();
+      resetAgentMailbox(startup.mailbox);
+    }
+  }
 });
 
 test("managed startup rejects a mismatched Agent before its first task and rolls back", async () => {
@@ -10600,11 +10908,16 @@ test("empty early launch cleans exact resources and same-label retry creates one
 test("assignment launch bounds missing official Pi session identity grace", async () => {
   setLeadEnvironment();
   const label = "agent";
+  let submitted = false;
+  let allocatedPath = "";
+  const observations: Array<string | null> = [];
   const startup = startupExecutor(
     label,
     () => null,
     undefined,
-    undefined,
+    () => {
+      submitted = true;
+    },
     false,
     undefined,
     "/tmp",
@@ -10645,8 +10958,19 @@ test("assignment launch bounds missing official Pi session identity grace", asyn
           code: 0,
         };
       const result = startup.exec(command, args, options);
-      if (command === "herdr" && args[0] === "agent" && args[1] === "start")
+      if (command === "herdr" && args[0] === "agent" && args[1] === "start") {
         started = true;
+        allocatedPath = args[args.indexOf("--resume") + 1]!;
+      }
+      if (
+        command === "herdr" &&
+        args[0] === "agent" &&
+        args[1] === "get" &&
+        args[2] === "startup-pane"
+      )
+        observations.push(
+          JSON.parse(result.stdout).result.agent.agent_session?.value ?? null,
+        );
       return result;
     },
   });
@@ -10662,18 +10986,28 @@ test("assignment launch bounds missing official Pi session identity grace", asyn
     undefined,
     fakeContext(),
   );
-  assert.equal(startup.getCount(), 11);
   assert.equal(result.details.error.category, "invalid_request");
   assert.match(
     result.details.error.message,
     /integration did not report its session identity/,
   );
   assert.equal(result.details.error.retryAttempted, true);
+  assert.ok(observations.length > 1, "missing identity was retried");
+  assert.ok(observations.every((identity) => identity === null));
+  assert.equal(submitted, false);
+  assert.ok(allocatedPath);
+  assert.equal(
+    realFs.existsSync(allocatedPath),
+    true,
+    "potentially started history is retained",
+  );
   assert.equal(pi.calls.filter((args) => isPreservePaneStop(args)).length, 1);
   assert.equal(
     pi.calls.filter((args) => isPaneClose(args) || isTabClose(args)).length,
     1,
   );
+  startup.stopMailboxConsumer();
+  resetAgentMailbox(startup.mailbox);
   pi.events.get("session_shutdown")?.[0]();
 });
 

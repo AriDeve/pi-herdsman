@@ -1842,6 +1842,11 @@ export function delegatedLifecycleExecutor(
         const workspaceId = paneEnvironment.PI_HERDSMAN_WORKSPACE_ID;
         const paneId = args[args.indexOf("--pane") + 1];
         const tabForPane = tabByPane.get(paneId) ?? "delegated-tab";
+        const session = launchedSession(
+          args,
+          childSessionIds[createdChildren++],
+          `/tmp/${label}.jsonl`,
+        );
         const state: ManagedAgentState = {
           version: 5,
           build: HERDSMAN_BUILD,
@@ -1850,8 +1855,8 @@ export function delegatedLifecycleExecutor(
           workspaceId,
           agentLabel: label,
           paneId,
-          piSessionId: childSessionIds[createdChildren++],
-          piSessionFile: `/tmp/${label}.jsonl`,
+          piSessionId: session.id,
+          piSessionFile: session.path,
           cwd: testCwd,
           updatedAt: Date.now(),
         };
@@ -2580,6 +2585,32 @@ export function writeMetadataTask(
   return request;
 }
 
+export function launchedSession(
+  args: string[],
+  fallbackId: string,
+  fallbackPath: string,
+) {
+  const resume = args.indexOf("--resume");
+  if (resume < 0) return { id: fallbackId, path: fallbackPath };
+  const path = args[resume + 1]!;
+  const existing = [...nativeSessions.values()].find(
+    (session) => session.path === path,
+  );
+  if (existing) return { id: existing.id, path };
+  const header = nativeParseSessionEntries(
+    realFs.readFileSync(path, "utf8"),
+  ).find((entry) => entry.type === "session");
+  assert.ok(header?.type === "session");
+  const saved = nativeSessions.get(header.id);
+  nativeSessions.set(header.id, {
+    ...saved,
+    id: header.id,
+    path,
+    cwd: header.cwd,
+  });
+  return { id: header.id, path };
+}
+
 export function startupExecutor(
   label: string,
   sessionForGet: (count: number) => string | null,
@@ -2605,6 +2636,11 @@ export function startupExecutor(
   let runId = testRunId;
   let ownerSessionId = testRunId ? LEAD_SESSION_ID : "";
   let activePaneId = "startup-pane";
+  let sessionId = DEFAULT_PI_SESSION_ID;
+  const observedSession = (count: number) => {
+    const reported = sessionForGet(count);
+    return reported === DEFAULT_PI_SESSION_ID ? sessionId : reported;
+  };
   const paneEnvironment: Record<string, string> = {};
   let stopped = false;
   let tabClosed = false;
@@ -2649,7 +2685,7 @@ export function startupExecutor(
                     source: "herdr:omp",
                     agent: "omp",
                     kind: "id",
-                    value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    value: sessionId,
                   },
                 },
               },
@@ -2659,7 +2695,7 @@ export function startupExecutor(
           };
         getCount++;
         onGet?.(getCount);
-        const session = sessionForGet(getCount);
+        const session = observedSession(getCount);
         return {
           stdout: JSON.stringify({
             id: AGENT_ID,
@@ -2722,7 +2758,7 @@ export function startupExecutor(
                     source: "herdr:omp",
                     agent: "omp",
                     kind: "id",
-                    value: sessionForGet(getCount) ?? DEFAULT_PI_SESSION_ID,
+                    value: observedSession(getCount) ?? sessionId,
                   },
                 },
               ]
@@ -2896,7 +2932,7 @@ export function startupExecutor(
                   source: "herdr:omp",
                   agent: "omp",
                   kind: "id",
-                  value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                  value: sessionId,
                 },
               },
             },
@@ -3000,6 +3036,9 @@ export function startupExecutor(
       if (args[0] !== "agent" || args[1] !== "start")
         return { stdout: "{}", stderr: "", code: 0 };
       onStart?.(args);
+      const session = launchedSession(args, DEFAULT_PI_SESSION_ID, sessionFile);
+      sessionId = session.id;
+      sessionFile = session.path;
       const startedAgent = {
         name: args[2],
         pane_id: activePaneId,
@@ -3010,7 +3049,7 @@ export function startupExecutor(
           source: "herdr:omp",
           agent: "omp",
           kind: "id",
-          value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          value: sessionId,
         },
       };
       writeAgentState(mailbox, {
@@ -3021,7 +3060,7 @@ export function startupExecutor(
         workspaceId: WORKSPACE,
         agentLabel: label,
         paneId: activePaneId,
-        piSessionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        piSessionId: sessionId,
         piSessionFile: sessionFile,
         agentDefinition: "agent",
         cwd: testCwd,
@@ -3055,7 +3094,7 @@ export function startupExecutor(
               thinking: null,
               cwd: testCwd,
               resumed: false,
-              session_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              session_id: sessionId,
               session_name: null,
             },
           },

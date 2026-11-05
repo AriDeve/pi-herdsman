@@ -131,12 +131,15 @@ transcripts or grant control through their paths. Herdsman's `Session stats`
 view continues to use current ownership and project assignments independently
 of native historical grouping.
 
-A managed Lead's native-format header is initialized exclusively with its exact
-assignment session ID, and its canonical path is persisted before launch. OMP
-owns all subsequent transcript writes. Continuation and restart resume the
-canonical file; missing or conflicting persisted identity fails closed rather
-than creating a replacement transcript or guessing a parent. Existing flat
-sessions are not relocated or migrated.
+Managed session headers are created exclusively with an exact immutable session
+ID before launch; OMP owns all subsequent transcript writes. New Agent basenames
+are `<definition>_<agent-name>_<full-UUID>.jsonl`; assigned Leads use
+`lead_<project-branch>_<full-UUID>.jsonl`. Each human component replaces characters
+outside ASCII letters, digits, `_`, and `-` with `_` and is bounded to 64
+characters. The complete UUID remains last, independent of human-name collisions.
+Names are fixed at creation: later title changes do not rename files.
+Continuation and restart use the original canonical file, and identity conflicts
+fail closed rather than creating replacement history or guessing a parent.
 
 With Herdr 0.9.5, canceling startup before native registration can leave an
 `Unknown` pending-launch name reservation that prevents relaunch. The exact
@@ -153,11 +156,13 @@ together.
 Historical paths are not promised to remain readable after native expiration or
 archival; Herdsman does not override native retention.
 
-The installed OMP dashboard has been exercised with Manager → assigned Lead →
-Agent → nested Agent, including active work before terminal delivery. Native
-trace assembly has a six-child-edge limit. Descendants use generic native
-labels rather than Herdsman role names; opening a descendant directly labels
-that selected trace root `Main` without changing its usage category.
+Native trace assembly has a six-child-edge limit. The dashboard labels children
+`agent <filename-stem>` and truncates labels at 80 characters, so readable names
+appear first but long names can hide the UUID in that view. Selecting a
+descendant directly labels that selected trace root `Main` without changing its
+usage category. Readable basenames do not carry a timestamp: native listing
+creation times may fall back to file modification time, and timestamp-based
+filename fast paths may not apply.
 
 ## See also
 

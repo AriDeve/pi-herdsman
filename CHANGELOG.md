@@ -21,6 +21,7 @@
 - **Breaking:** `list_agents` returns live Agents only; use `list_agent_definitions` for the refreshed caller-scoped definition roster.
 - Allow user-preauthorized repositories to run guarded Manager worktree removal through `remove_worktree`, and record unpreauthorized requests as pending review intent on the active session branch with correlated `request_id`; reject sessions without a native session-file identity before recording intent. Add `/manager remove-preapproval on|off`, `/manager settings`, and `/manager remove` review.
 - Keep Manager-only removal status off unrelated Lead recovery paths, preserving accepted results when session identity is unavailable.
+- Give new managed Agent and assigned Lead transcripts creation-time readable names with a complete UUID suffix, preserving native parent-stem hierarchy, exact-session continuation, and immutable history.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

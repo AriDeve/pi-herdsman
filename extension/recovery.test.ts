@@ -60,6 +60,7 @@ import support, {
   setLeadEnvironment,
   setAgentEnvironment,
   startupExecutor,
+  launchedSession,
   testTmpRoot,
   truncateModelText,
   agentMailboxPath,
@@ -592,6 +593,10 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
   let malformedPostClosePaneList = false;
   let runId = "";
   let ownerSessionId = "";
+  let session = {
+    id: DEFAULT_PI_SESSION_ID,
+    path: "/tmp/registered-agent.jsonl",
+  };
   const emptyList = () => {
     const value = JSON.parse(listResponse(label));
     value.agents = [];
@@ -622,7 +627,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                   source: "herdr:omp",
                   value: validating
                     ? "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
-                    : "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    : session.id,
                 },
               },
             },
@@ -733,7 +738,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                         agent: "omp",
                         kind: "id",
                         source: "herdr:omp",
-                        value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                        value: session.id,
                       },
                     }),
               },
@@ -779,7 +784,9 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
           stdout:
             started && !stopped
               ? (() => {
-                  const value = JSON.parse(listResponse(label));
+                  const value = JSON.parse(
+                    listResponse(label, "idle", session.id),
+                  );
                   const alias = runScopedHerdrAlias(WORKSPACE, label, runId);
                   value.agents[0].herdr_agent = alias;
                   value.agents[0].name = alias;
@@ -824,6 +831,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
         return { stdout: "{}", stderr: "", code: 0 };
       }
       started = true;
+      session = launchedSession(args, session.id, session.path);
       writeAgentState(mailbox, {
         version: 5,
         build: HERDSMAN_BUILD,
@@ -832,8 +840,8 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
         workspaceId: WORKSPACE,
         agentLabel: label,
         paneId: "pane-start",
-        piSessionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-        piSessionFile: "/tmp/registered-agent.jsonl",
+        piSessionId: session.id,
+        piSessionFile: session.path,
         cwd: "/tmp",
         updatedAt: Date.now(),
       });
@@ -858,7 +866,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
                 agent: "omp",
                 kind: "id",
                 source: "herdr:omp",
-                value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                value: session.id,
               },
             },
             runtime_identity: {
@@ -869,7 +877,7 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
               thinking: null,
               cwd: "/tmp",
               resumed: false,
-              session_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              session_id: session.id,
               session_name: null,
             },
           },
@@ -979,7 +987,10 @@ test("malformed disappearance proof retains failed-launch cleanup evidence", asy
   );
   assert.equal(listed.details.agents.length, 1);
   assert.equal(listed.details.agents[0].state, "lost");
-  assert.deepEqual(listed.details.agents[0].available_tools, ["close_agent"]);
+  assert.deepEqual(listed.details.agents[0].available_tools, [
+    "read_agent_transcript",
+    "close_agent",
+  ]);
   assert.equal(listed.details.cleanup_errors, undefined);
   pi.events.get("session_shutdown")?.[0]();
   resetAgentMailbox(mailbox);
@@ -1091,6 +1102,10 @@ test("assignment rollback retains primary failure and actionable cleanup details
   let ownerSessionId = "";
   let splitCreated = false;
   let rollbackStarted = false;
+  let session = {
+    id: DEFAULT_PI_SESSION_ID,
+    path: "/tmp/registered-agent.jsonl",
+  };
   const emptyList = () => {
     const value = JSON.parse(listResponse(label));
     value.agents = [];
@@ -1120,9 +1135,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
                   kind: "id",
                   source: "herdr:omp",
                   value:
-                    args[2] === "detail-pane"
-                      ? "wrong-session"
-                      : "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    args[2] === "detail-pane" ? "wrong-session" : session.id,
                 },
               },
             },
@@ -1250,7 +1263,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
                   agent: "omp",
                   kind: "id",
                   source: "herdr:omp",
-                  value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                  value: session.id,
                 },
               },
             },
@@ -1292,7 +1305,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
           return { stdout: emptyList(), stderr: "", code: 0 };
         return {
           stdout: (() => {
-            const value = JSON.parse(listResponse(label));
+            const value = JSON.parse(listResponse(label, "idle", session.id));
             const alias = runScopedHerdrAlias(WORKSPACE, label, runId);
             value.agents[0].herdr_agent = alias;
             value.agents[0].name = alias;
@@ -1332,6 +1345,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
           stderr: `error: preserved pane identity did not settle: {"pane_id":"detail-pane","workspace_id":"${WORKSPACE}"}`,
           code: 1,
         };
+      session = launchedSession(args, session.id, session.path);
       writeAgentState(mailbox, {
         version: 5,
         build: HERDSMAN_BUILD,
@@ -1340,8 +1354,8 @@ test("assignment rollback retains primary failure and actionable cleanup details
         workspaceId: WORKSPACE,
         agentLabel: label,
         paneId: "detail-pane",
-        piSessionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-        piSessionFile: "/tmp/registered-agent.jsonl",
+        piSessionId: session.id,
+        piSessionFile: session.path,
         cwd: "/tmp",
         updatedAt: Date.now(),
       });
@@ -1366,7 +1380,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
                 agent: "omp",
                 kind: "id",
                 source: "herdr:omp",
-                value: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                value: session.id,
               },
             },
             runtime_identity: {
@@ -1377,7 +1391,7 @@ test("assignment rollback retains primary failure and actionable cleanup details
               thinking: null,
               cwd: "/tmp",
               resumed: false,
-              session_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              session_id: session.id,
               session_name: null,
             },
           },
