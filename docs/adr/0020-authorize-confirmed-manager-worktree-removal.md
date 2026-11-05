@@ -6,6 +6,13 @@
 
 Accepted
 
+Partly superseded by
+[ADR 0027](0027-repository-scoped-manager-removal-approval.md) (per-removal-only
+approval; repository preauthorization is now possible) and
+[ADR 0028](0028-durable-manager-removal-intent.md) (pending request intent is
+now durable on the session branch). The Herdr-owned removal, guarded exact
+validation, and retirement decisions below remain in force.
+
 ## Context
 
 [ADR 0013](0013-use-herdr-worktree-removal-for-project-retirement.md) assigns

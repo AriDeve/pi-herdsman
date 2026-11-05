@@ -26,3 +26,11 @@ Persistent paths must be derived from Pi's agent directory rather than hard-code
 An absent Herdsman configuration uses defaults; removed legacy configuration locations do not require fallback reads or migration unless a future decision explicitly adds one.
 
 Temporary data must not be promoted to durable authority merely because it is convenient to write there.
+
+## Later note
+
+[ADR 0027](0027-repository-scoped-manager-removal-approval.md) stores a
+user-only repository removal preauthorization in this global configuration.
+[ADR 0028](0028-durable-manager-removal-intent.md) keeps pending removal review
+intent in native Pi session entries instead of this root, as a conversation
+scoped exception.

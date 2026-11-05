@@ -479,7 +479,10 @@ Pi Herdsman uses one durable vocabulary:
   branch and Pi session. Explicit
   `/takeover` by the assigned Lead also releases Manager control and removes
   pending project messages while preserving the session, worktree, branch, and
-  owned Agents. Never infer
+  owned Agents. Removal needs an explicit user request. Without repository
+  preauthorization, `remove_worktree` returns `pending: true` with a
+  `request_id` and removes nothing; tell the user to run `/manager remove` and
+  continue other work. Never poll or treat it as approval. Never infer
   ownership from worktree membership or start an overlapping writer beside
   another Lead;
 - `/manager leave` preserves project work; a later Manager can resume the same

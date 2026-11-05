@@ -185,8 +185,8 @@ stopping the session or owned Agents.
 
 ## `remove_worktree`
 
-Manager only. Validate an exact assigned project's linked checkout and request
-independent human confirmation without waiting or removing anything:
+Manager only. Fulfill an explicitly requested checkout removal for an exact
+assigned project, or record it for human review:
 
 ```json
 { "branch": "feat/example" }
@@ -195,18 +195,30 @@ independent human confirmation without waiting or removing anything:
 Use this only for an explicitly requested checkout removal, never as an
 inference from task completion, review, or inactivity. Herdsman requires the
 active Manager's exact current assignment and matching linked checkout and
-checks clean state and occupants. With UI available, a valid request returns
-`confirmation_required: true` and `ok: false`: no removal, execution shutdown,
-locks, or pending approval state is created. This is not a failed removal or
-evidence of checkout removal or assignment retirement; physical outcome fields
-are absent. Headless requests are refused.
+checks clean state and occupants.
 
-Direct the user to `/manager remove <branch>` or `/manager` → Project →
-Remove worktree… and continue unrelated coordination. Do not repeat or poll
-the tool for approval. Each human action validates current authority and target
-afresh; an earlier request confers no authorization.
+When the Manager's verified repository is preauthorized by the user (see
+[Configuration](configuration.md#worktree-removal-preauthorization)), the
+request runs the guarded removal below without a further prompt, including
+headless. Otherwise a valid request returns promptly with `ok: false`,
+`confirmation_required: true`, `pending: true`, and a correlated `request_id`:
+nothing is removed, no execution is stopped, no lock is held, and the Manager
+is not blocked. This is not a failed removal or evidence of checkout removal or
+assignment retirement; physical outcome fields are absent.
 
-Both human entry points share one confirmed destructive operation. It requires the
+The pending request is review intent recorded on the active Pi session branch.
+It is acknowledged only after Herdsman reads it back from the persisted native
+session; if that proof is unavailable the call fails instead of returning
+`pending`. It is not authorization. A stale pending request for the same branch
+neither blocks nor authorizes a fresh request for the current target. Repeating the request for the same current assignment
+and checkout reuses the `request_id`; a changed assignment or checkout replaces
+it. Direct the user to `/manager remove` (status line guidance) and continue
+unrelated coordination. Do not poll the tool for approval. Approval, dismissal,
+cancellation, and Manager leave each consume only the exact request ID.
+Approval revalidates current authority and the recorded target afresh.
+
+The preauthorized tool path and the human confirmed path share one guarded
+destructive operation. It requires the
 active Manager's exact current assignment and matching linked checkout, refuses
 ambiguous or dirty targets, and never forces removal. If the assigned Lead is
 running, its proven owned execution is stopped before removal; a paused Lead is
@@ -215,7 +227,7 @@ not automatically restarted. A closed Herdr workspace may be reopened to
 address its verified checkout. Herdr remains responsible for removing the
 worktree.
 
-The confirmation identifies the branch and project checkout, explains that
+A human confirmation identifies the branch and project checkout, explains that
 managed execution may be stopped, and says the Git branch and Pi conversation
 remain while the assignment will be retired only after verified checkout
 removal. Type the exact word `remove`; cancellation or any other response has

@@ -23,7 +23,10 @@ Herdsman package version.
 /lead [flexible|orchestrate]
 /manager
 /manager leave
+/manager remove
 /manager remove <branch>
+/manager remove-preapproval on|off
+/manager settings
 /chief
 /chief leave
 /takeover
@@ -265,7 +268,7 @@ the setting affects only a later `session_start`, not the running role.
 The Manager overview lists branch-based work, including paused work whose Lead
 is no longer running. It offers resume for paused work and focus or stop for a
 live assigned Lead, plus `Remove worktree…` for assigned projects including
-paused work. This uses the same explicitly confirmed removal operation as
+paused work. This uses the same guarded removal operation as
 `/manager remove <branch>`; it preserves the Git branch and Pi conversation.
 Running managed execution may be stopped, and assignment retirement is
 reported separately from checkout removal. Manager staff reports include
@@ -284,15 +287,16 @@ An active Manager can remove an assigned project checkout with:
 ```
 
 This command does not activate Manager mode. It accepts a manually typed branch;
-completion suggests `leave` or `remove`, then branches assigned to the active
-Manager's repository after `remove`. Suggestions are advisory and are not
-required. Before removal, the shared operation verifies the exact assignment
-and linked checkout, checks that the checkout is clean, and asks for interactive
+completion suggests `leave`, `remove`, `remove-preapproval`, and `settings`, then
+branches assigned to the active Manager's repository after `remove `. Suggestions
+are advisory. Before removal, the operation verifies the exact assignment and
+linked checkout, checks that the checkout is clean, and asks for interactive
 confirmation. Type `remove` to confirm. Running owned project execution may be
 stopped and will not be automatically restarted if a later removal step fails.
 Herdr removes the checkout without force; the Git branch and Pi conversation
 remain, and the confirmation explains that the assignment is retired only
-after authoritative removal is verified. Cancellation makes no changes.
+after authoritative removal is verified. Cancellation preserves the checkout
+and execution while consuming the matching pending request.
 
 The native multiline confirmation identifies the branch and absolute checkout
 path, separates what is removed from what is preserved, and requires the exact
@@ -300,9 +304,30 @@ word `remove`. Escape, empty input, or any other response cancels. No operation
 lock is held while waiting; authority, target identity, and safety are checked
 again under the existing locks after confirmation.
 
-The model-facing `remove_worktree` tool only validates and returns instructions
-for these independent human actions; it never opens this prompt or queues a
-removal. See [Staff tools](staff.md#remove_worktree) for the result contract.
+Without repository preauthorization, the model-facing `remove_worktree` tool
+records a pending removal request on the active session branch instead of
+removing anything, and the status line shows `<N> removal review pending ·
+/manager remove`. Bare `/manager remove` selects a pending request and offers
+`Review removal`, `Dismiss request`, or `Leave pending`. Reviewing validates the
+recorded target and then uses the confirmation above; the typed branch form also
+resolves a matching pending request. Approval, cancelled confirmation,
+dismissal, and `/manager leave` consume only the exact request, and each
+consumption is verified in the persisted native session first. Reviewing a
+recorded request rejects a stale target. Bare `/manager remove` with nothing
+pending shows a notice. A pending request is restored after reload of the same
+session branch for review only and never authorizes removal or restores Manager
+authority. If leave commits but consumption cannot be verified, Manager mode
+still ends and the error reports that uncertainty. Malformed removal entries
+are ignored. See
+[Staff tools](staff.md#remove_worktree) for the result contract.
+
+`/manager remove-preapproval on|off` enables or revokes removal preauthorization
+for the active Manager's verified repository. Enabling names the repository and
+requires typing `enable`; revoking needs no confirmation and takes effect
+immediately. `/manager settings` and the Manager role menu's `Settings` offer the
+same toggle, and `Review pending removals` opens the review. Each needs an
+interactive UI. See
+[Configuration](configuration.md#worktree-removal-preauthorization).
 
 An eligible ordinary Lead can activate runtime Chief mode with `/chief`.
 While Chief, `/chief` refreshes its validated profile after the current turn

@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { BeforeAgentStartEvent } from "@oh-my-pi/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { visibleWidth, type SelectItem } from "@earendil-works/pi-tui";
+import { visibleWidth, Container, Input, Text, type SelectItem } from "@earendil-works/pi-tui";
 import type {
   ChiefLease,
   ChiefDescriptor,
@@ -130,7 +130,27 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpathSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { persistedTranscriptReady as controllerPersistedTranscriptReady } from "./agent-controller.ts";
-import { inspectSessionFile } from "./foreign-session.ts";
+import { inspectSessionFile, assertPersistedCustomEntry } from "./foreign-session.ts";
+import { isWorktreeRemovalPreapproved, setWorktreeRemovalPreapproved } from "./config.ts";
+import { REMOVAL_INTENT_ENTRY, removalIntents, sameRemovalTarget, type RemovalRequest, type RemovalOutcome } from "./worktree-removal-intent.ts";
+
+function verifyCustomEntryPersistence(ctx: ExtensionContext, customType: string, data: unknown): void {
+  try {
+    const path = ctx.sessionManager.getSessionFile();
+    if (!path) throw new Error("No native session file");
+    assertPersistedCustomEntry(inspectSessionFile(path), ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), customType, data);
+  } catch (error) {
+    throw new Error("Native session persistence could not be verified; no removal authority was granted", { cause: error });
+  }
+}
+
+function persistRemovalResolution(pi: ExtensionAPI, ctx: ExtensionContext, request: RemovalRequest, outcome: RemovalOutcome): void {
+  if (!removalIntents(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId()).some(current => current.requestId === request.requestId))
+    throw new Error("Removal request changed; review the current request");
+  const resolution = { version: 1, phase: "resolution", requestId: request.requestId, sessionId: request.sessionId, outcome };
+  pi.appendEntry(REMOVAL_INTENT_ENTRY, resolution);
+  verifyCustomEntryPersistence(ctx, REMOVAL_INTENT_ENTRY, resolution);
+}
 
 type LeadIdentityHost = {
   expectedSession(id: string, path?: string): ExpectedSession;
@@ -421,6 +441,8 @@ type LeadCommandHost = {
   isLead(): boolean;
   buildStatusRows: typeof buildStatusRows;
   renderRunningOptions: typeof renderRunningOptions;
+  openRemovalSettings?(ctx: ExtensionCommandContext): Promise<void>;
+  reviewRemovals?(ctx: ExtensionCommandContext): Promise<void>;
   formatStatusCounts: typeof formatStatusCounts;
   openSupervisionOverview(ctx: ExtensionCommandContext): Promise<void>;
   controller: LeadController;
@@ -439,6 +461,8 @@ type LeadCommandBaseHost = Omit<
   | "isLead"
   | "buildStatusRows"
   | "renderRunningOptions"
+  | "openRemovalSettings"
+  | "reviewRemovals"
   | "formatStatusCounts"
   | "openSupervisionOverview"
   | "controller"
@@ -2485,6 +2509,7 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
         active
           ? [
               { value: "overview", label: "Overview" },
+              ...(role === "manager" ? [{ value: "removals", label: "Review pending removals" }, { value: "settings", label: "Settings" }] : []),
               { value: "leave", label: `Leave ${name} mode` },
             ]
           : [{ value: "start", label: `Start ${name} mode` }],
@@ -2493,6 +2518,10 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
         await this.runRoleCommand(role, "", ctx);
       else if (selected === "leave")
         await this.runRoleCommand(role, "leave", ctx);
+      else if (role === "manager" && selected === "settings")
+        await host.openRemovalSettings?.(ctx);
+      else if (role === "manager" && selected === "removals")
+        await host.reviewRemovals?.(ctx);
     },
     async runRoleCommand(
       role: "manager" | "chief",
@@ -2971,6 +3000,7 @@ export function registerLeadRuntime(
     statusRuntime.clear();
     clearSupervisionUI();
     supervisionUiRuntime.startPeriodic(ctx);
+    projectRuntime.refreshRemovalStatus(ctx);
     if (ctx.mode !== "tui" || !ctx.hasUI) return;
     try {
       supervisionUiRuntime.registerWidget(
@@ -3415,7 +3445,10 @@ export function registerLeadRuntime(
       coordinationRuntime.schedulePeerPresence(ctx),
     removePeerPresence: () => coordinationRuntime.removePeerPresence(),
     clearNormalUI: () => statusRuntime.clear(),
-    startNormalUI: (ctx: ExtensionContext) => statusRuntime.start(ctx),
+    startNormalUI: (ctx: ExtensionContext) => {
+      statusRuntime.start(ctx);
+      projectRuntime.refreshRemovalStatus(ctx);
+    },
     startSupervisionUI,
     clearSupervisionUI,
     publishLeadRole,
@@ -3423,8 +3456,10 @@ export function registerLeadRuntime(
     enterLead,
     enterChief,
     waitForPeerPresence: () => coordinationRuntime.waitForPeerPresence(),
-    markLeadCoordinationUnhealthy: (ctx?: ExtensionContext) =>
-      coordinationRuntime.markLeadCoordinationUnhealthy(ctx),
+    markLeadCoordinationUnhealthy: (ctx?: ExtensionContext) => {
+      coordinationRuntime.markLeadCoordinationUnhealthy(ctx);
+      if (ctx) projectRuntime.refreshRemovalStatus(ctx);
+    },
     reconcileRoleTools: () => roleTransitions.reconcileRoleTools(),
     enterSuspended,
     resetSupervisionSnapshot: () => supervisionUiRuntime.reset(),
@@ -3922,6 +3957,8 @@ export function registerLeadRuntime(
     buildStatusRows,
     renderRunningOptions,
     formatStatusCounts,
+    openRemovalSettings: (ctx: ExtensionCommandContext) => projectRuntime.removalSettings(ctx),
+    reviewRemovals: (ctx: ExtensionCommandContext) => projectRuntime.reviewRemovals(ctx),
     openSupervisionOverview: (ctx: ExtensionCommandContext) =>
       supervisionUiRuntime.openOverview(ctx, {
         focusLead: (
@@ -4366,9 +4403,10 @@ export function registerLeadRuntime(
   pi.on("tool_call", (event: any, ctx: ExtensionContext) =>
     agentEvents.toolCall(event, ctx),
   );
-  pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
+  pi.on("session_start", async (_event: unknown, ctx: ExtensionContext) => {
     inheritedProjection = undefined;
-    return sessionStart.sessionStart(ctx);
+    await sessionStart.sessionStart(ctx);
+    projectRuntime.refreshRemovalStatus(ctx);
   });
   pi.on("session_info_changed", (event: any, ctx: ExtensionContext) => {
     if (!roleTransitions.chiefModeInactive()) return;
@@ -4386,9 +4424,10 @@ export function registerLeadRuntime(
   pi.on("session_compact", (_event: unknown, ctx: ExtensionContext) =>
     options.queueLeadPresentation(ctx),
   );
-  pi.on("session_tree", (_event: unknown, ctx: ExtensionContext) => {
+  pi.on("session_tree", async (_event: unknown, ctx: ExtensionContext) => {
     inheritedProjection = undefined;
-    return sessionTree.sessionTree(ctx);
+    await sessionTree.sessionTree(ctx);
+    projectRuntime.refreshRemovalStatus(ctx);
   });
   pi.on("session_shutdown", (_event: unknown, ctx: ExtensionContext) => {
     inheritedProjection = undefined;
@@ -6590,6 +6629,16 @@ function restoreHerdRunReportId(
 }
 
 export function createLeadProjectRuntime(host: LeadProjectHost) {
+  const pendingRemovals = (ctx: ExtensionContext) =>
+    removalIntents(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId());
+  const refreshRemovalStatus = (ctx: ExtensionContext) => {
+    const pending = pendingRemovals(ctx);
+    ctx.ui.setStatus?.("pi-herdsman-removal", activeRole() === "manager" && !leadRuntime.roleSuspended && pending.length ? `${pending.length} removal review pending · /manager remove` : undefined);
+  };
+  const resolveRemoval = (ctx: ExtensionContext, request: RemovalRequest, outcome: RemovalOutcome) => {
+    persistRemovalResolution(host.pi, ctx, request, outcome);
+    refreshRemovalStatus(ctx);
+  };
   const stopExecution = async (
     session: string,
     target: HerdrRecord,
@@ -6903,38 +6952,111 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
         "Unrelated or ambiguously identified Pi execution occupies the worktree; worktree preserved",
       );
   };
+  // OMP flattens and truncates multiline ctx.ui.input titles, hiding the typed keyword; in TUI render the safeguards as a custom component.
+  const typedConfirmation = (
+    ctx: ExtensionContext,
+    title: string,
+    lines: string[],
+    keyword: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> => {
+    if ((ctx as ExtensionCommandContext).mode !== "tui")
+      return ctx.ui.input([title, "", ...lines, "", `Type ${keyword} to confirm.`].join("\n"), undefined, { signal });
+    return ctx.ui.custom<string | undefined>((tui: any, theme: any, _keys: any, done: (v: unknown) => void) => {
+      const input = new Input();
+      const container = new Container();
+      let finished = false;
+      const finish = (value?: string): void => {
+        if (finished) return;
+        finished = true;
+        signal?.removeEventListener("abort", onAbort);
+        done(value);
+      };
+      const onAbort = (): void => finish();
+      if (signal?.aborted) queueMicrotask(onAbort);
+      else signal?.addEventListener("abort", onAbort, { once: true });
+      input.onSubmit = (value: string) => finish(value);
+      input.onEscape = () => finish();
+      populateMenuFrame(
+        container,
+        theme,
+        title,
+        new Text([...lines, "", theme.fg("warning", `Type ${keyword} to confirm.`), ""].join("\n"), 1, 0),
+        "Enter submit · Esc cancel",
+        input,
+      );
+      return {
+        get focused() {
+          return input.focused;
+        },
+        set focused(value: boolean) {
+          input.focused = value;
+        },
+        render: (width: number) => container.render(width),
+        invalidate: () => container.invalidate(),
+        handleInput: (data: string) => {
+          input.handleInput(data);
+          tui.requestRender();
+        },
+      };
+    }) as Promise<string | undefined>;
+  };
   const removeWorktree = async (
     branch: string,
     ctx: ExtensionContext,
     signal?: AbortSignal,
+    approval?: { preapproved: true } | { request: RemovalRequest },
   ) => {
     if (activeRole() !== "manager")
       throw new Error("Only Managers can remove project worktrees");
-    if (!ctx.hasUI)
-      throw new Error("Worktree removal requires interactive confirmation");
+    if (!approval || !("preapproved" in approval))
+      if (!ctx.hasUI) throw new Error("Worktree removal requires interactive confirmation");
     const operationSignal = signal ?? ctx.signal;
     operationSignal?.throwIfAborted();
     const candidate = await inspectRemovalTarget(branch, ctx, operationSignal);
     await assertNoUnrelatedPiExecution(candidate, ctx, operationSignal);
-    const answer = await ctx.ui.input(
-      [
+    const identity = {
+      repoKey: candidate.manager.repoKey, branch: candidate.assignment.branch,
+      assignmentId: candidate.assignment.id, piSessionFile: candidate.assignment.piSessionFile!,
+      checkoutPath: candidate.checkoutPath,
+    };
+    const branchRequest = pendingRemovals(ctx).find(request => request.repoKey === identity.repoKey && request.branch === branch);
+    const recorded = approval && "request" in approval ? approval.request : branchRequest && sameRemovalTarget(branchRequest, identity) ? branchRequest : undefined;
+    if (recorded && !sameRemovalTarget(recorded, identity))
+      throw new Error("Recorded removal target changed; worktree preserved");
+    const preapproved = approval && "preapproved" in approval;
+    if (preapproved && !isWorktreeRemovalPreapproved(candidate.manager.repoKey))
+      throw new Error("Repository removal preauthorization was revoked");
+    let answer: string | undefined;
+    try {
+      answer = preapproved ? "remove" : await typedConfirmation(
+        ctx,
         "Remove worktree",
-        "",
-        `Branch: ${branch}`,
-        `Checkout: ${candidate.checkoutPath}`,
-        "",
-        "Removes this checkout and Herdr workspace.",
-        "Running managed execution may be stopped.",
-        "Preserves the Git branch and Pi conversation.",
-        "Retires the assignment after verified removal.",
-        "",
-        "Type remove to confirm.",
-      ].join("\n"),
-      undefined,
-      { signal: operationSignal },
-    );
-    operationSignal?.throwIfAborted();
-    if (answer !== "remove")
+        [
+          `Branch: ${branch}`,
+          `Checkout: ${candidate.checkoutPath}`,
+          "",
+          "Removes this checkout and Herdr workspace.",
+          "Running managed execution may be stopped.",
+          "Preserves the Git branch and Pi conversation.",
+          "Retires the assignment after verified removal.",
+        ],
+        "remove",
+        operationSignal,
+      );
+      operationSignal?.throwIfAborted();
+    } catch (error) {
+      if (recorded && pendingRemovals(ctx).some(current => current.requestId === recorded.requestId)) {
+        try {
+          resolveRemoval(ctx, recorded, "cancelled");
+        } catch (persistenceError) {
+          throw new AggregateError([error, persistenceError], "Input aborted and cancellation persistence could not be verified", { cause: error });
+        }
+      }
+      throw error;
+    }
+    if (answer !== "remove") {
+      if (recorded) resolveRemoval(ctx, recorded, "cancelled");
       return {
         content: [
           {
@@ -6944,6 +7066,15 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
         ],
         details: { ok: false, action: "remove", branch, cancelled: true },
       };
+    }
+    if (recorded) resolveRemoval(ctx, recorded, "approved");
+    else if (branchRequest) resolveRemoval(ctx, branchRequest, "dismissed");
+    else {
+      // A failed consuming write may already have cleared memory's pending
+      // projection. Preauthorization must not bypass its missing disk proof.
+      const latest = ctx.sessionManager.getBranch().findLast(entry => entry.type === "custom" && entry.customType === REMOVAL_INTENT_ENTRY);
+      if (latest) verifyCustomEntryPersistence(ctx, REMOVAL_INTENT_ENTRY, latest.data);
+    }
     return host.withProjectWorkLock(
       `${candidate.manager.repoKey}\0${branch}`,
       async () => {
@@ -6962,6 +7093,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
               );
               if (
                 current.assignment.id !== candidate.assignment.id ||
+                current.assignment.piSessionFile !== candidate.assignment.piSessionFile ||
                 current.checkoutPath !== candidate.checkoutPath ||
                 !host.sameManagerDescriptor(current.manager, candidate.manager)
               )
@@ -6969,6 +7101,8 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
                   "Removal target changed during confirmation; worktree preserved",
                 );
               await assertNoUnrelatedPiExecution(current, ctx, operationSignal);
+              if (preapproved && !isWorktreeRemovalPreapproved(current.manager.repoKey))
+                throw new Error("Repository removal preauthorization was revoked");
               if (current.liveLead) {
                 try {
                   await stopExecution(
@@ -7042,13 +7176,17 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
               if (
                 final.assignment.id !== current.assignment.id ||
                 final.worktree.open_workspace_id !== workspaceId ||
-                final.checkoutPath !== current.checkoutPath
+                final.checkoutPath !== current.checkoutPath ||
+                final.assignment.piSessionFile !== current.assignment.piSessionFile ||
+                !host.sameManagerDescriptor(final.manager, candidate.manager)
               )
                 throw new Error(
                   "Removal target changed before native removal; worktree preserved",
                 );
               try {
                 operationSignal?.throwIfAborted();
+                if (preapproved && !isWorktreeRemovalPreapproved(final.manager.repoKey))
+                  throw new Error("Repository removal preauthorization was revoked");
                 return {
                   result: await host.runHerdr(
                     host.pi,
@@ -7132,6 +7270,54 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
         };
       },
     );
+  };
+  const reviewRemovals = async (ctx: ExtensionContext) => {
+    if (!ctx.hasUI) throw new Error("Removal review requires interactive UI");
+    if (activeRole() !== "manager" || !(await host.currentManager(ctx)))
+      throw new Error("Manager lease is no longer active");
+    const requests = pendingRemovals(ctx);
+    if (!requests.length) {
+      ctx.ui.notify("No pending worktree removal requests.", "info");
+      return;
+    }
+    const selected = await ctx.ui.select("Pending worktree removal requests", requests.map(request => `${request.branch} · ${request.requestId}`));
+    const request = requests.find(request => `${request.branch} · ${request.requestId}` === selected);
+    if (!request) return;
+    const action = await ctx.ui.select(`Review ${request.branch} · ${request.requestId}`, ["Review removal", "Dismiss request", "Leave pending"]);
+    if (action === "Dismiss request") {
+      resolveRemoval(ctx, request, "dismissed");
+      return;
+    }
+    if (action !== "Review removal") return;
+    const result = await removeWorktree(request.branch, ctx, ctx.signal, { request });
+    ctx.ui.notify(result.content[0]?.text ?? "Removal finished.", result.details.ok || result.details.cancelled ? "info" : "warning");
+  };
+  const removalPreapproval = async (enabled: boolean, ctx: ExtensionContext) => {
+    if (!ctx.hasUI) throw new Error("Removal preauthorization requires human UI");
+    const manager = await host.currentManager(ctx);
+    const lease = host.managerLease();
+    if (activeRole() !== "manager" || !manager || !lease || !host.sameManagerDescriptor(manager, lease.descriptor))
+      throw new Error("Manager lease is no longer active");
+    const group = await host.worktreeGroupScope(host.pi, ctx, manager.workspaceId, ctx.signal);
+    if (group.repoKey !== manager.repoKey || group.primaryWorkspaceId !== manager.workspaceId)
+      throw new Error("Manager repository identity is not authoritative");
+    if (enabled) {
+      const answer = await typedConfirmation(ctx, "Preauthorize worktree removal", [`Repository: ${manager.repoKey}`, "", "Manager requests may remove assigned clean checkouts without another prompt.", "Revoke any time with /manager remove-preapproval off."], "enable", ctx.signal);
+      if (answer !== "enable") return;
+    }
+    const current = await host.currentManager(ctx);
+    const currentLease = host.managerLease();
+    if (!current || !currentLease || !host.sameManagerDescriptor(current, manager) || !host.sameManagerDescriptor(current, currentLease.descriptor))
+      throw new Error("Manager authority changed during preauthorization");
+    setWorktreeRemovalPreapproved(manager.repoKey, enabled);
+    ctx.ui.notify(`Worktree removal preauthorization ${enabled ? "enabled" : "revoked"} for ${manager.repoKey}.`, "info");
+  };
+  const removalSettings = async (ctx: ExtensionContext) => {
+    const manager = await host.currentManager(ctx);
+    if (!manager || activeRole() !== "manager") throw new Error("Manager lease is no longer active");
+    const enabled = isWorktreeRemovalPreapproved(manager.repoKey);
+    const selected = await ctx.ui.select(`Manager Settings · ${manager.repoKey}`, [`Worktree removal preauthorization: ${enabled ? "on" : "off"}`, "Cancel"]);
+    if (selected?.startsWith("Worktree removal preauthorization:")) await removalPreapproval(!enabled, ctx);
   };
   const {
     pi,
@@ -8022,8 +8208,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
     if (params.action === "remove") {
       if (activeRole() !== "manager")
         throw new Error("Only Managers can remove project worktrees");
-      if (!ctx.hasUI)
-        throw new Error("Worktree removal requires interactive confirmation");
+      // Pending review is nonblocking and may be recorded without a human UI.
       const operationSignal = signal ?? ctx.signal;
       operationSignal?.throwIfAborted();
       const target = await inspectRemovalTarget(
@@ -8032,11 +8217,19 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
         operationSignal,
       );
       await assertNoUnrelatedPiExecution(target, ctx, operationSignal);
+      if (isWorktreeRemovalPreapproved(target.manager.repoKey))
+        return removeWorktree(params.branch, ctx, operationSignal, { preapproved: true });
+      const identity = { repoKey: target.manager.repoKey, branch: target.assignment.branch, assignmentId: target.assignment.id, piSessionFile: target.assignment.piSessionFile!, checkoutPath: target.checkoutPath };
+      const existing = pendingRemovals(ctx).find(request => sameRemovalTarget(request, identity));
+      const request: RemovalRequest = existing ?? { version: 1, phase: "request", requestId: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), createdAt: Date.now(), ...identity };
+      if (!existing) host.pi.appendEntry(REMOVAL_INTENT_ENTRY, request);
+      verifyCustomEntryPersistence(ctx, REMOVAL_INTENT_ENTRY, request);
+      refreshRemovalStatus(ctx);
       return {
         content: [
           {
             type: "text" as const,
-            text: `No worktree was removed. To confirm removal of ${params.branch}, use /manager remove ${params.branch} or /manager → Project → Remove worktree….`,
+            text: `No worktree was removed. Request ${request.requestId} awaits independent human review through /manager remove or /manager → Project → Remove worktree….`,
           },
         ],
         details: {
@@ -8044,6 +8237,8 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
           action: "remove",
           branch: params.branch,
           confirmation_required: true,
+          pending: true,
+          request_id: request.requestId,
         },
       };
     }
@@ -8679,6 +8874,11 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
     stop,
     activateProjectLead,
     removeWorktree,
+    pendingRemovals,
+    refreshRemovalStatus,
+    reviewRemovals,
+    removalPreapproval,
+    removalSettings,
     executeStaff,
     updateAssignmentEvidence,
     inspectRequiredEvidence,
@@ -12575,15 +12775,32 @@ export function createLeadRoleTransitions(
   ): Promise<string> => {
     if (state.controllerRole !== "manager" || !state.managerLease)
       throw new Error("Manager mode is not active");
+    const branch = ctx.sessionManager.getBranch();
+    const sessionId = ctx.sessionManager.getSessionId();
+    const pending = [...new Map(removalIntents(branch, sessionId).map(request => [request.requestId, request])).values()];
+    // Replay individual records to retain valid request history even after its
+    // consuming entry cleared pending. Malformed/foreign records add no history.
+    const hasRemovalHistory = branch.some(entry => entry.type === "custom" && entry.customType === REMOVAL_INTENT_ENTRY && removalIntents([entry], sessionId).length > 0);
+    const latestRemoval = hasRemovalHistory ? branch.findLast(entry => entry.type === "custom" && entry.customType === REMOVAL_INTENT_ENTRY && entry.data && typeof entry.data === "object" && "sessionId" in entry.data && entry.data.sessionId === sessionId) : undefined;
+    const verifyRolePersistence = (role: "lead" | "manager") => {
+      const branch = ctx.sessionManager.getBranch();
+      const entry = branch.findLast(entry => entry.type === "custom" && entry.customType === "pi-herdsman-role");
+      if (!entry || host.sessionLeadRoleState(branch)?.role !== role)
+        throw new Error("Native role persistence could not be verified");
+      verifyCustomEntryPersistence(ctx, "pi-herdsman-role", entry.data);
+      if (latestRemoval) verifyCustomEntryPersistence(ctx, REMOVAL_INTENT_ENTRY, latestRemoval.data);
+    };
     state.controllerRole = "lead";
     try {
       host.persistRole("lead");
+      if (latestRemoval) verifyRolePersistence("lead");
       if (!host.persistCoordinatorState())
         throw new Error("Lead coordination state could not be persisted");
     } catch (error) {
       state.controllerRole = "manager";
       try {
         host.persistRole("manager");
+        if (latestRemoval) verifyRolePersistence("manager");
         if (!host.persistCoordinatorState())
           throw new Error("Manager coordination state could not be restored");
       } catch (rollbackError) {
@@ -12599,6 +12816,18 @@ export function createLeadRoleTransitions(
       }
       throw error;
     }
+    // Role persistence is the leave commit point. A crash before consumption
+    // can restore review intent, but only in a Lead session, never as authority.
+    // After this point do not roll back to Manager if intent persistence fails.
+    const consumptionErrors: Error[] = [];
+    for (const request of pending) {
+      try {
+        persistRemovalResolution(host.pi, ctx, request, "left");
+      } catch (error) {
+        consumptionErrors.push(new Error(`Request ${request.requestId}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }));
+      }
+    }
+    ctx.ui.setStatus?.("pi-herdsman-removal", undefined);
     host.advancePeerPresenceGeneration();
     host.removePeerPresence();
     try {
@@ -12617,6 +12846,8 @@ export function createLeadRoleTransitions(
     host.startNormalUI(ctx);
     if (host.coordinationHealthy()) await host.schedulePeerPresence(ctx);
     await host.publishLeadRole(ctx, "inactive", state.chiefModeGeneration);
+    if (consumptionErrors.length)
+      throw new AggregateError(consumptionErrors, `Manager mode left; pending removal intent consumption could not be verified: ${consumptionErrors.map(error => error.message).join("; ")}`);
     return "Manager mode left.";
   };
   const deactivateChief = async (ctx: ExtensionContext): Promise<void> => {

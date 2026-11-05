@@ -28,3 +28,10 @@ Recovery and presentation must derive current runtime state from coherent fresh 
 Destructive operations must revalidate current evidence instead of trusting previously observed placement.
 
 This boundary may require more explicit identity checks, but it avoids a second reconciliation authority and prevents stale runtime state from silently becoming policy.
+
+## Later note
+
+[ADR 0028](0028-durable-manager-removal-intent.md) adds one narrow case of
+durable review intent for Manager worktree removal, held in native session
+entries rather than Herdsman root state; it grants no authority and leaves this
+decision otherwise unchanged.

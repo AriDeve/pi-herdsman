@@ -19,6 +19,7 @@
 - Distinguish execution completion from owner acceptance in result delivery and preserve validated numeric runtime failure details without exposing arbitrary upstream error messages.
 - Dispatch accepted OMP interrupt replacements at operation end without waiting for whole-run settlement; retain terminal-result guards and settlement-handler failure isolation, distinguish acceptance from application, and expose child-confirmed pending controls without claiming native queue supersession.
 - **Breaking:** `list_agents` returns live Agents only; use `list_agent_definitions` for the refreshed caller-scoped definition roster.
+- Allow user-preauthorized repositories to run guarded Manager worktree removal through `remove_worktree`, and record unpreauthorized requests as pending review intent on the active session branch with correlated `request_id`; add `/manager remove-preapproval on|off`, `/manager settings`, and `/manager remove` review.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

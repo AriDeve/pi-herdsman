@@ -66,10 +66,12 @@ const {
   DEFAULT_CONFIG,
   MAX_BYTE_LIMIT,
   MIN_BYTE_LIMIT,
+  isWorktreeRemovalPreapproved,
   readConfig,
   readEffectiveConfig,
   readProjectOverrides,
   updateConfig,
+  setWorktreeRemovalPreapproved,
   updateProjectOverride,
   validByteLimit,
 } = await import("./config.ts");
@@ -125,6 +127,7 @@ test("partial and complete valid configs overlay defaults", () => {
     defaultLeadExecution: "orchestrate",
     contextRetirement: true,
     autoActivateManager: true,
+    worktreeRemovalPreapprovedRepos: [],
     inlineAttachmentLimitBytes: MIN_BYTE_LIMIT,
     mailboxPayloadLimitBytes: MAX_BYTE_LIMIT,
   });
@@ -157,6 +160,7 @@ test("trusted project preferences override only the two supported global values"
     for (const content of [
       '{"piHerdsman":{"autoActivateManager":"false"}}',
       '{"piHerdsman":{"defaultLeadExecution":"flexible"}}',
+      '{"piHerdsman":{"worktreeRemovalPreapprovedRepos":["/repo/.git"]}}',
       "{",
     ]) {
       realFs.writeFileSync(`${cwd}/.omp/settings.json`, content);
@@ -417,4 +421,59 @@ test("config updates honor the shared process lock", () => {
   } finally {
     release();
   }
+});
+
+test("worktree removal preapproval is exact, fresh, and independently revocable", () => {
+  const first = "/repos/first/.git";
+  const second = "/repos/second/.git";
+  assert.deepEqual(readConfig().worktreeRemovalPreapprovedRepos, []);
+  readConfig().worktreeRemovalPreapprovedRepos.push(first);
+  assert.equal(isWorktreeRemovalPreapproved(first), false);
+  updateConfig("contextRetirement", false);
+  setWorktreeRemovalPreapproved(first, true);
+  setWorktreeRemovalPreapproved(second, true);
+  setWorktreeRemovalPreapproved(first, true);
+  assert.deepEqual(readConfig().worktreeRemovalPreapprovedRepos, [first, second]);
+  assert.equal(isWorktreeRemovalPreapproved(`${first}/other`), false);
+  assert.equal(isWorktreeRemovalPreapproved(first), true);
+  setWorktreeRemovalPreapproved(first, false);
+  assert.equal(isWorktreeRemovalPreapproved(first), false);
+  assert.equal(isWorktreeRemovalPreapproved(second), true);
+  assert.equal(readConfig().contextRetirement, false);
+  updateConfig("worktreeRemovalPreapprovedRepos", []);
+  assert.equal(isWorktreeRemovalPreapproved(second), false);
+});
+
+test("worktree removal preapproval rejects malformed identities and configuration", () => {
+  for (const identity of ["", "relative/repo", "/repo/\0bad"]) {
+    assert.throws(() => setWorktreeRemovalPreapproved(identity, true));
+    assert.throws(() => isWorktreeRemovalPreapproved(identity));
+    assert.throws(() =>
+      updateConfig("worktreeRemovalPreapprovedRepos", [identity]),
+    );
+  }
+  assert.throws(() => setWorktreeRemovalPreapproved("/repo", "true" as never));
+  assert.throws(() => updateConfig("worktreeRemovalPreapprovedRepos", true as never));
+  assert.throws(() => updateConfig("worktreeRemovalPreapprovedRepos", Array(1)));
+  realFs.mkdirSync(herdsmanDataRoot(), { recursive: true });
+  for (const value of [true, "/repo", ["/repo", 1], ["relative"], ["/repo/\0bad"]]) {
+    realFs.writeFileSync(
+      herdsmanConfigPath(),
+      JSON.stringify({ worktreeRemovalPreapprovedRepos: value }),
+    );
+    assert.throws(() => readConfig());
+    assert.throws(() => isWorktreeRemovalPreapproved("/repo"));
+  }
+});
+
+test("worktree removal preapproval updates honor the shared config lock", () => {
+  const release = claimProcessLock(`${herdsmanConfigPath()}.lock`, {
+    name: "Pi Herdsman config update",
+  });
+  try {
+    assert.throws(() => setWorktreeRemovalPreapproved("/repo/.git", true));
+  } finally {
+    release();
+  }
+  assert.equal(isWorktreeRemovalPreapproved("/repo/.git"), false);
 });

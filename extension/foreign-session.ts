@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { isDeepStrictEqual } from "node:util";
 
 /** Only persisted inspection; never opens a SessionManager or owns its writer. */
 export interface ForeignSessionSnapshot {
@@ -129,6 +130,34 @@ export function inspectSessionFile(path: string): ForeignSessionSnapshot {
       return resolve(header.cwd);
     },
   };
+}
+
+/**
+ * Prove a custom entry and its active native ancestry are readable from disk.
+ * appendEntry's return is not proof: OMP may retain a failed write in memory.
+ * This uses the caller-selected native branch, never the file's last branch.
+ */
+export function assertPersistedCustomEntry(
+  snapshot: ForeignSessionSnapshot,
+  sessionId: string,
+  branch: readonly SessionEntry[],
+  customType: string,
+  data: unknown,
+): void {
+  const fail = () => new Error("Native session persistence could not be verified");
+  if (snapshot.getSessionId() !== sessionId || branch.length === 0) throw fail();
+  const persisted = new Map(snapshot.getEntries().map(entry => [entry.id, entry]));
+  let parentId: string | null = null;
+  for (const entry of branch) {
+    const stored = persisted.get(entry.id);
+    if (!entry.id || entry.parentId !== parentId || !stored || stored.parentId !== entry.parentId)
+      throw fail();
+    parentId = entry.id;
+  }
+  const expected = branch.findLast(entry => entry.type === "custom" && entry.customType === customType && isDeepStrictEqual(entry.data, data));
+  const stored = expected && persisted.get(expected.id);
+  if (!stored || stored.type !== "custom" || stored.customType !== customType || !isDeepStrictEqual(stored.data, data))
+    throw fail();
 }
 
 function canonicalCwd(cwd: string): string {

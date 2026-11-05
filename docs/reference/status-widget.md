@@ -269,8 +269,16 @@ its latest snapshot.
 
 Neither changes agent control state.
 
+## Pending removal review
+
+Separately from the widget, an active Manager with pending worktree-removal
+requests on the current session branch shows the footer status
+`<N> removal review pending · /manager remove`. It clears when no request
+remains pending and when Manager mode is left. See
+[Commands](commands.md#project-manager-and-chief) for review.
+
 ## See also
 
 - [Agent states](agent-states.md)
-- [`/agents definitions`](commands.md#agents-definitions)
+- [`/herdsman definitions`](commands.md#herdsman-definitions)
 - [Recovery](../guides/recovery.md)

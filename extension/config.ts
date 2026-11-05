@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { lockSync } from "proper-lockfile";
 import { claimProcessLock } from "./lock.ts";
@@ -32,6 +32,7 @@ export type HerdsmanConfig = {
   defaultLeadExecution: LeadExecutionMode;
   contextRetirement: boolean;
   autoActivateManager: boolean;
+  worktreeRemovalPreapprovedRepos: string[];
   inlineAttachmentLimitBytes: number;
   mailboxPayloadLimitBytes: number;
 };
@@ -41,6 +42,7 @@ export const DEFAULT_CONFIG: HerdsmanConfig = {
   defaultLeadExecution: "flexible",
   contextRetirement: true,
   autoActivateManager: false,
+  worktreeRemovalPreapprovedRepos: [],
   inlineAttachmentLimitBytes: DEFAULT_BYTE_LIMIT,
   mailboxPayloadLimitBytes: DEFAULT_BYTE_LIMIT,
 };
@@ -60,9 +62,20 @@ const CONFIG_KEYS = new Set<ConfigKey>([
   "defaultLeadExecution",
   "contextRetirement",
   "autoActivateManager",
+  "worktreeRemovalPreapprovedRepos",
   "inlineAttachmentLimitBytes",
   "mailboxPayloadLimitBytes",
 ]);
+
+function validRepoIdentity(value: unknown): value is string {
+  return typeof value === "string" && isAbsolute(value) && !value.includes("\0");
+}
+
+function validRepoIdentities(value: unknown): value is string[] {
+  if (!Array.isArray(value)) return false;
+  for (const identity of value) if (!validRepoIdentity(identity)) return false;
+  return true;
+}
 
 function parseRawConfig(content: string): Partial<HerdsmanConfig> {
   let parsed: unknown;
@@ -100,6 +113,13 @@ function parseRawConfig(content: string): Partial<HerdsmanConfig> {
       throw new Error("Invalid Pi Herdsman config field autoActivateManager");
     result.autoActivateManager = record.autoActivateManager;
   }
+  if ("worktreeRemovalPreapprovedRepos" in record) {
+    if (!validRepoIdentities(record.worktreeRemovalPreapprovedRepos))
+      throw new Error(
+        "Invalid Pi Herdsman config field worktreeRemovalPreapprovedRepos",
+      );
+    result.worktreeRemovalPreapprovedRepos = record.worktreeRemovalPreapprovedRepos;
+  }
   for (const key of [
     "inlineAttachmentLimitBytes",
     "mailboxPayloadLimitBytes",
@@ -123,7 +143,7 @@ function readRawConfig(): Partial<HerdsmanConfig> {
 }
 
 export function readConfig(): HerdsmanConfig {
-  return { ...DEFAULT_CONFIG, ...readRawConfig() };
+  return { ...DEFAULT_CONFIG, worktreeRemovalPreapprovedRepos: [], ...readRawConfig() };
 }
 
 type ProjectContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
@@ -313,9 +333,8 @@ function writeConfigAtomically(
   }
 }
 
-export function updateConfig<K extends ConfigKey>(
-  key: K,
-  value: HerdsmanConfig[K] | undefined,
+function updateRawConfig(
+  change: (current: Partial<HerdsmanConfig>) => boolean,
 ): void {
   const path = herdsmanConfigPath();
   const release = claimProcessLock(`${path}.lock`, {
@@ -323,27 +342,7 @@ export function updateConfig<K extends ConfigKey>(
   });
   try {
     const current = readRawConfig();
-    if (value !== undefined) {
-      if (key === "spawnPlacement" && !isSpawnPlacement(value))
-        throw new Error("Invalid Pi Herdsman config field spawnPlacement");
-      if (key === "defaultLeadExecution" && !isLeadExecutionMode(value))
-        throw new Error(
-          "Invalid Pi Herdsman config field defaultLeadExecution",
-        );
-      if (key === "contextRetirement" && typeof value !== "boolean")
-        throw new Error("Invalid Pi Herdsman config field contextRetirement");
-      if (key === "autoActivateManager" && typeof value !== "boolean")
-        throw new Error("Invalid Pi Herdsman config field autoActivateManager");
-      if (
-        key !== "spawnPlacement" &&
-        key !== "defaultLeadExecution" &&
-        key !== "contextRetirement" &&
-        key !== "autoActivateManager" &&
-        !validByteLimit(value)
-      )
-        throw new Error(`Invalid Pi Herdsman config field ${key}`);
-      current[key] = value;
-    } else delete current[key];
+    if (!change(current)) return;
     if (Object.keys(current).length)
       writeConfigAtomically(path, `${JSON.stringify(current, null, 2)}\n`);
     else {
@@ -356,4 +355,63 @@ export function updateConfig<K extends ConfigKey>(
   } finally {
     release();
   }
+}
+
+export function updateConfig<K extends ConfigKey>(
+  key: K,
+  value: HerdsmanConfig[K] | undefined,
+): void {
+  updateRawConfig((current) => {
+    if (value !== undefined) {
+      if (key === "spawnPlacement" && !isSpawnPlacement(value))
+        throw new Error("Invalid Pi Herdsman config field spawnPlacement");
+      if (key === "defaultLeadExecution" && !isLeadExecutionMode(value))
+        throw new Error(
+          "Invalid Pi Herdsman config field defaultLeadExecution",
+        );
+      if (key === "contextRetirement" && typeof value !== "boolean")
+        throw new Error("Invalid Pi Herdsman config field contextRetirement");
+      if (key === "autoActivateManager" && typeof value !== "boolean")
+        throw new Error("Invalid Pi Herdsman config field autoActivateManager");
+      if (
+        key === "worktreeRemovalPreapprovedRepos" &&
+        !validRepoIdentities(value)
+      )
+        throw new Error(
+          "Invalid Pi Herdsman config field worktreeRemovalPreapprovedRepos",
+        );
+      if (
+        key !== "spawnPlacement" &&
+        key !== "defaultLeadExecution" &&
+        key !== "contextRetirement" &&
+        key !== "autoActivateManager" &&
+        key !== "worktreeRemovalPreapprovedRepos" &&
+        !validByteLimit(value)
+      )
+        throw new Error(`Invalid Pi Herdsman config field ${key}`);
+      current[key] = value;
+    } else delete current[key];
+    return true;
+  });
+}
+
+export function isWorktreeRemovalPreapproved(repoKey: string): boolean {
+  if (!validRepoIdentity(repoKey)) throw new Error("Invalid repository identity");
+  return readConfig().worktreeRemovalPreapprovedRepos.includes(repoKey);
+}
+
+export function setWorktreeRemovalPreapproved(
+  repoKey: string,
+  enabled: boolean,
+): void {
+  if (!validRepoIdentity(repoKey)) throw new Error("Invalid repository identity");
+  if (typeof enabled !== "boolean") throw new Error("Invalid preapproval value");
+  updateRawConfig((current) => {
+    const repos = current.worktreeRemovalPreapprovedRepos ?? [];
+    if (repos.includes(repoKey) === enabled) return false;
+    current.worktreeRemovalPreapprovedRepos = enabled
+      ? [...repos, repoKey]
+      : repos.filter((repo) => repo !== repoKey);
+    return true;
+  });
 }

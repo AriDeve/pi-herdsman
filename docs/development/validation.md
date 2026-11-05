@@ -51,6 +51,18 @@ appearing in native provider schemas. Completion requires a native
 provider-agnostic request-tool projection boundary; making the excluded probe
 inactive does not satisfy this check.
 
+`bun scripts/omp-manager-removal-check.ts` (after `bun run build`) runs real
+OMP and Herdr against a scripted loopback provider in a newly created,
+disposable Git repository. It checks nonblocking pending removal requests,
+duplicate IDs, native status, same-session reload, visible typed confirmations,
+cancellation, dismissal, Manager leave/re-entry, Settings and command-based
+repository preauthorization/revocation, then explicitly requested non-forced
+removal. It verifies assignment/workspace retirement and branch/conversation
+preservation before cleaning its owned server and temporary root. Its isolated
+configuration never changes existing repository permission. This scenario does
+not establish real-model adherence or native sibling-branch/new-session
+isolation; focused tests cover the latter intent-replay boundaries.
+
 The upstream Pi smoke scripts remain Pi-targeted; OMP delegation requires a
 separate named Herdr session with OMP's integration loaded.
 

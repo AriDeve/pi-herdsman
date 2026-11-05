@@ -52,6 +52,8 @@ import {
 } from "./supervision.ts";
 import { OperationError } from "./errors.ts";
 import { readRequiredEvidenceSnapshot, resultPath } from "./storage.ts";
+import { setWorktreeRemovalPreapproved } from "./config.ts";
+import { removalIntents, REMOVAL_INTENT_ENTRY } from "./worktree-removal-intent.ts";
 // Core imports must follow support's asynchronous host-module mocks.
 const { claimDelegationLock } = await import("./agent-controller.ts");
 const { createLeadCommandRuntime, createLeadProjectRuntime } =
@@ -3685,7 +3687,7 @@ test("failed Manager activation preserves late inherited tools through rollback"
   }
 });
 
-test("Manager leave retains its lease and role when persistence fails", async () => {
+test("Manager leave retains its lease, role and pending intent when persistence fails", async (t) => {
   setLeadEnvironment();
   process.env.HERDR_PANE_ID = "manager-pane";
   process.env.HERDR_TAB_ID = "manager-tab";
@@ -3720,9 +3722,12 @@ test("Manager leave retains its lease and role when persistence fails", async ()
                 ? respond({ snapshot: { agents: [], panes: [] } })
                 : respond({}),
   });
-  const ctx = fakeContext() as any;
+  const ctx = fakeContext(pi.entries) as any;
+  attachManagerJournal(t, pi, ctx);
   const notices: string[] = [];
   ctx.ui.notify = (message: string) => notices.push(message);
+  let removalStatus: string | undefined;
+  ctx.ui.setStatus = (key: string, value: string | undefined) => { if (key === "pi-herdsman-removal") removalStatus = value; };
   registerExtension!(pi.pi as never);
   try {
     await pi.events.get("session_start")![0](undefined, ctx);
@@ -3732,6 +3737,10 @@ test("Manager leave retains its lease and role when persistence fails", async ()
       WORKSPACE,
     )?.leaseId;
     assert.ok(leaseId);
+    const pending = { version: 1, phase: "request", requestId: "leave-pending", sessionId: ctx.sessionManager.getSessionId(), repoKey: "/repo/.git", branch: "leave-test", assignmentId: "lead", piSessionFile: "/sessions/lead.jsonl", checkoutPath: "/checkout", createdAt: 1 };
+    pi.pi.appendEntry(REMOVAL_INTENT_ENTRY, pending);
+    pi.pi.appendEntry(REMOVAL_INTENT_ENTRY, { version: 999, sessionId: "foreign" });
+    pi.pi.appendEntry(REMOVAL_INTENT_ENTRY, { version: 999, sessionId: ctx.sessionManager.getSessionId() });
     const originalAppend = pi.pi.appendEntry;
     for (const failedType of ["pi-herdsman-role", "pi-herdsman-lead-state"]) {
       let failed = false;
@@ -3761,6 +3770,7 @@ test("Manager leave retains its lease and role when persistence fails", async ()
         "manager",
       );
       assert.deepEqual(pi.pi.getActiveTools(), managerTools);
+      assert.equal(removalIntents(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId())[0]?.requestId, pending.requestId);
     }
     await pi.commandOptions.get("manager").handler("leave", ctx);
     assert.equal(
@@ -3771,7 +3781,31 @@ test("Manager leave retains its lease and role when persistence fails", async ()
       readLeadCoordinationState(supervisionRuntime(), LEAD_SESSION_ID)?.role,
       "lead",
     );
+    assert.deepEqual(removalIntents(ctx.sessionManager.getBranch(), ctx.sessionManager.getSessionId()), []);
     await pi.commandOptions.get("manager").handler("", ctx);
+    const unconsumed = { ...pending, requestId: "leave-resolution-write-failure" };
+    pi.pi.appendEntry(REMOVAL_INTENT_ENTRY, unconsumed);
+    const later = { ...unconsumed, requestId: "leave-later-request", branch: "leave-later" };
+    pi.pi.appendEntry(REMOVAL_INTENT_ENTRY, later);
+    const attempted: string[] = [];
+    const journal = nativeSessions.get(ctx.sessionManager.getSessionFile())!;
+    pi.pi.appendEntry = (type: string, data: unknown) => {
+      if (type === REMOVAL_INTENT_ENTRY && data && typeof data === "object" && "requestId" in data) {
+        attempted.push(String(data.requestId));
+        if (data.requestId === unconsumed.requestId) throw new Error("first resolution failed");
+      }
+      originalAppend(type, data);
+    };
+    await pi.commandOptions.get("manager").handler("leave", ctx);
+    pi.pi.appendEntry = originalAppend;
+    assert.deepEqual(attempted, [unconsumed.requestId, later.requestId]);
+    assert.equal(removalStatus, undefined, "Lead must not advertise Manager-only review");
+    assert.equal(readManagerDescriptor(supervisionRuntime(), WORKSPACE), undefined);
+    assert.equal(sessionLeadRoleState(journal.entries)?.role, "lead");
+    assert.equal(removalIntents(journal.entries, ctx.sessionManager.getSessionId())[0]?.requestId, unconsumed.requestId);
+    assert.ok(notices.some(message => message.includes("Manager mode left; pending removal intent consumption could not be verified")));
+    await pi.commandOptions.get("manager").handler("", ctx);
+    assert.match(removalStatus!, /removal review pending.*\/manager remove/);
     const suspendedLease = readManagerDescriptor(
       supervisionRuntime(),
       WORKSPACE,
@@ -3793,6 +3827,7 @@ test("Manager leave retains its lease and role when persistence fails", async ()
       undefined,
     );
     assert.deepEqual(pi.pi.getActiveTools(), ["read"]);
+    assert.equal(removalStatus, undefined, "Suspended Manager must not advertise unavailable review");
   } finally {
     await pi.events.get("session_shutdown")?.[0]();
     delete process.env.HERDR_SOCKET_PATH;
@@ -4869,6 +4904,25 @@ test("linked and non-project sessions derive ordinary Lead tools", async () => {
   }
 });
 
+function attachManagerJournal(t: TestContext, pi: ReturnType<typeof fakeChiefPi>, ctx: ReturnType<typeof fakeContext>) {
+  const path = join(PI_AGENT_ROOT, `manager-journal-${randomUUID()}.jsonl`);
+  const persisted: unknown[] = [];
+  const original = pi.pi.appendEntry;
+  pi.pi.appendEntry = (customType: string, data: unknown) => {
+    original(customType, data);
+    let parentId: string | null = null;
+    for (const entry of pi.entries) {
+      entry.id ??= randomUUID();
+      entry.parentId = parentId;
+      parentId = entry.id;
+    }
+    persisted.splice(0, persisted.length, ...structuredClone(pi.entries));
+  };
+  ctx.sessionManager.getSessionFile = () => path;
+  nativeSessions.set(path, { id: ctx.sessionManager.getSessionId(), path, cwd: ctx.cwd, entries: persisted });
+  t.after(() => nativeSessions.delete(path));
+}
+
 async function managerRemovalFixture(
   t: TestContext,
   options: {
@@ -4885,6 +4939,8 @@ async function managerRemovalFixture(
     primaryWorkspaceInitially?: boolean;
     primaryWorkspaceAfterConfirmation?: boolean;
     replaceManagerAfterConfirmation?: boolean;
+    beforeWorkLock?: () => void;
+    failIntentWrite?: (data: Record<string, unknown>) => boolean;
   } = {},
 ) {
   const repoKey = realFs.mkdtempSync(join(PI_AGENT_ROOT, "remove-repo-"));
@@ -4956,8 +5012,19 @@ async function managerRemovalFixture(
     ];
     return worktrees.join("\0");
   };
+  const removalEntries: { id: string; parentId: string | null; type: "custom"; customType: string; data: Record<string, unknown> }[] = [];
+  const persistedEntries: typeof removalEntries = [];
+  let role: "lead" | "manager" = "manager";
+  const managerSessionFile = join(repoKey, "manager.jsonl");
+  nativeSessions.set(managerSessionFile, { id: LEAD_SESSION_ID, path: managerSessionFile, cwd: repoKey, entries: persistedEntries });
+  t.after(() => nativeSessions.delete(managerSessionFile));
   const runtime = createLeadProjectRuntime({
     pi: {
+      appendEntry: (customType: string, data: Record<string, unknown>) => {
+        const entry = { id: randomUUID(), parentId: removalEntries.at(-1)?.id ?? null, type: "custom" as const, customType, data };
+        removalEntries.push(entry);
+        if (!options.failIntentWrite?.(data)) persistedEntries.push(structuredClone(entry));
+      },
       exec: async (command: string, args: string[], runOptions: any) => {
         assert.equal(command, "git");
         if (args[0] === "rev-parse" && args[1] === "--show-toplevel")
@@ -4974,7 +5041,7 @@ async function managerRemovalFixture(
     } as any,
     leadRuntime: { managerLease: { descriptor: manager } } as any,
     managerLease: () => ({ descriptor: manager }),
-    activeRole: () => "manager",
+    activeRole: () => role,
     currentManager: async () =>
       managerReplaced ? { ...manager, leaseId: "replacement-lease" } : manager,
     sameManagerDescriptor: (left: any, right: any) => left === right,
@@ -5055,6 +5122,7 @@ async function managerRemovalFixture(
       leadRunning = false;
     },
     withProjectWorkLock: async (_key: string, operation: () => unknown) => {
+      options.beforeWorkLock?.();
       lockCount++;
       return operation();
     },
@@ -5078,7 +5146,10 @@ async function managerRemovalFixture(
     HERDSMAN_BUILD: {} as any,
   } as any);
   const ctx = fakeContext([]) as any;
+  ctx.sessionManager.getBranch = () => removalEntries;
+  ctx.sessionManager.getSessionFile = () => managerSessionFile;
   ctx.hasUI = true;
+  ctx.mode = "rpc"; // input-based confirmation; the TUI custom confirmation has its own test
   ctx.ui.input = async () => {
     assert.equal(lockCount, 0, "no operation lock may span human confirmation");
     confirmationCount++;
@@ -5092,9 +5163,17 @@ async function managerRemovalFixture(
   return {
     runtime,
     ctx,
+    setRole: (value: "lead" | "manager") => { role = value; },
     assignment: () => assignment,
     checkoutPath,
     calls,
+    repoKey,
+    removalEntries,
+    persistedEntries,
+    replaceAssignment: () => {
+      assignment = { ...assignment, id: "replacement-assignment" };
+      nativeSessions.get(assignment.piSessionFile)!.id = assignment.id;
+    },
     removals,
     confirmationCount: () => confirmationCount,
     stoppedLeadCount: () => stoppedLeadCount,
@@ -5102,12 +5181,79 @@ async function managerRemovalFixture(
   };
 }
 
+test("Manager removal refuses acknowledged pending intent when native request write is missing", async (t) => {
+  const fixture = await managerRemovalFixture(t, { failIntentWrite: () => true });
+  const request = () => fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  await assert.rejects(request(), /persist/i);
+  await assert.rejects(request(), /persist/i);
+  assert.deepEqual(fixture.persistedEntries, []);
+  assert.deepEqual(fixture.removals, []);
+  assert.equal(fixture.lockCount(), 0);
+});
+
+test("Manager removal refuses execution when native approval resolution write is missing", async (t) => {
+  const fixture = await managerRemovalFixture(t, { runningLead: true, failIntentWrite: data => data.phase === "resolution" });
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx), /persist/i);
+  setWorktreeRemovalPreapproved(fixture.repoKey, true);
+  t.after(() => setWorktreeRemovalPreapproved(fixture.repoKey, false));
+  await assert.rejects(fixture.runtime.executeStaff("after-failed-consumption", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx), /persist/i);
+  assert.equal(fixture.persistedEntries.filter(entry => entry.data.phase === "request").length, 1);
+  assert.equal(fixture.persistedEntries.filter(entry => entry.data.phase === "resolution").length, 0);
+  assert.deepEqual(fixture.removals, []);
+  assert.equal(fixture.lockCount(), 0);
+  assert.equal(fixture.stoppedLeadCount(), 0);
+});
+
+test("Manager aborted confirmation preserves abort and failed durable cancellation evidence", async (t) => {
+  const fixture = await managerRemovalFixture(t, { failIntentWrite: data => data.phase === "resolution" });
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  const aborted = new Error("original input abort");
+  fixture.ctx.ui.input = async () => { throw aborted; };
+  await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx), error => {
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.errors[0], aborted);
+    assert.match(String(error.errors[1]), /persistence/);
+    return true;
+  });
+  assert.equal(fixture.lockCount(), 0);
+});
+
+test("Pending removal guidance is visible only in active Manager role", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  let status: string | undefined;
+  fixture.ctx.ui.setStatus = (_key: string, value: string | undefined) => { status = value; };
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  assert.match(status!, /removal review pending/);
+  fixture.setRole("lead");
+  fixture.runtime.refreshRemovalStatus(fixture.ctx);
+  assert.equal(status, undefined);
+  fixture.setRole("manager");
+  fixture.runtime.refreshRemovalStatus(fixture.ctx);
+  assert.match(status!, /removal review pending/);
+});
+
+test("Manager repeated pending acknowledgement rejects mismatched native session, branch and custom data", async (t) => {
+  for (const mismatch of ["session", "branch", "data"]) {
+    const fixture = await managerRemovalFixture(t);
+    const request = () => fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+    await request();
+    if (mismatch === "session") nativeSessions.get(fixture.ctx.sessionManager.getSessionFile())!.id = "foreign-session";
+    else if (mismatch === "branch") fixture.persistedEntries[0]!.parentId = "sibling-parent";
+    else fixture.persistedEntries[0]!.data = { ...fixture.persistedEntries[0]!.data, checkoutPath: "/other-checkout" };
+    await assert.rejects(request(), /persistence/);
+    assert.equal(fixture.lockCount(), 0);
+    assert.deepEqual(fixture.removals, []);
+  }
+});
+
 test("Manager removal requests leave running and closed worktrees untouched", async (t) => {
   for (const options of [{ runningLead: true }, { closedWorkspace: true }]) {
     const fixture = await managerRemovalFixture(t, options);
     fixture.ctx.ui.input = async () => {
       throw new Error("Model removal must not prompt");
     };
+    let requestId: string | undefined;
     for (let request = 0; request < 2; request++) {
       const result = await fixture.runtime.executeStaff(
         "request",
@@ -5118,10 +5264,18 @@ test("Manager removal requests leave running and closed worktrees untouched", as
       );
       assert.equal(result.details.confirmation_required, true);
       assert.equal(result.details.ok, false);
+      assert.equal(result.details.pending, true);
+      assert.equal(typeof result.details.request_id, "string");
+      if (requestId) assert.equal(result.details.request_id, requestId);
+      requestId = result.details.request_id;
       assert.equal(result.details.checkout_removed, undefined);
       assert.equal(result.details.checkout_state, undefined);
       assert.equal(result.details.assignment_retired, undefined);
     }
+    assert.equal(fixture.runtime.pendingRemovals(fixture.ctx).length, 1);
+    fixture.ctx.ui.input = async () => "cancel";
+    await fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx);
+    assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
     assert.equal(fixture.stoppedLeadCount(), 0);
     assert.equal(fixture.lockCount(), 0);
     assert.equal(fixture.confirmationCount(), 0);
@@ -5129,6 +5283,145 @@ test("Manager removal requests leave running and closed worktrees untouched", as
     assert.ok(existsSync(fixture.checkoutPath));
     assert.ok(fixture.calls.every((args) => args[1] === "list"));
   }
+});
+
+test("Manager pending removal cancellation consumes intent even when confirmation aborts", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  const controller = new AbortController();
+  fixture.ctx.ui.input = async () => { controller.abort(); return undefined; };
+  await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx, controller.signal));
+  assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+  assert.equal(fixture.removals.length, 0);
+});
+
+test("Manager fresh current-target removal supersedes stale intent but recorded review rejects it", async (t) => {
+  for (const preapproved of [false, true]) {
+    const fixture = await managerRemovalFixture(t);
+    await fixture.runtime.executeStaff("request-a", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+    const original = fixture.runtime.pendingRemovals(fixture.ctx)[0]!;
+    fixture.replaceAssignment();
+    await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx, undefined, { request: original }), /Recorded removal target changed/);
+    if (preapproved) {
+      setWorktreeRemovalPreapproved(fixture.repoKey, true);
+      t.after(() => setWorktreeRemovalPreapproved(fixture.repoKey, false));
+    }
+    const result = preapproved
+      ? await fixture.runtime.executeStaff("request-b", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx)
+      : await fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx);
+    assert.equal(result.details.checkout_removed, true);
+    assert.equal(result.details.assignment_id, "replacement-assignment");
+    assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+    assert.equal(fixture.confirmationCount(), preapproved ? 0 : 1);
+  }
+});
+
+test("Manager empty removal review explains that nothing is pending without a selector", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  const notices: string[] = [];
+  fixture.ctx.ui.notify = (message: string) => notices.push(message);
+  fixture.ctx.ui.select = async () => { throw new Error("Empty review must not open a selector"); };
+  await fixture.runtime.reviewRemovals(fixture.ctx);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0]!, /no pending/i);
+});
+
+test("Manager TUI removal confirmation renders safeguards and keyword, and Escape consumes the request", async (t) => {
+  for (const keys of [[..."wrong", "\r"], ["\u001b"]]) {
+    const fixture = await managerRemovalFixture(t);
+    await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+    fixture.ctx.mode = "tui";
+    fixture.ctx.ui.input = async () => { throw new Error("multiline ctx.ui.input title is truncated by OMP"); };
+    let rendered = "";
+    fixture.ctx.ui.custom = async (factory: any) =>
+      new Promise((resolve) => {
+        const component = factory({ requestRender: () => undefined }, { fg: (_c: string, s: string) => s, bold: (s: string) => s }, {}, resolve);
+        rendered = component.render(100).join("\n");
+        for (const key of keys) component.handleInput(key);
+      });
+    const result = await fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx);
+    assert.match(rendered, /Type remove to confirm/);
+    assert.match(rendered, /Preserves the Git branch and Pi conversation/);
+    assert.ok(rendered.includes(fixture.checkoutPath));
+    assert.equal(result.details.cancelled, true);
+    assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+    assert.equal(fixture.removals.length, 0);
+    assert.ok(existsSync(fixture.checkoutPath));
+  }
+});
+
+test("Manager removal preapproval skips only the prompt and revocation is checked under lock", async (t) => {
+  for (const revoke of [false, true]) {
+    let repoKey = "";
+    const fixture = await managerRemovalFixture(t, { runningLead: true, beforeWorkLock: () => { if (revoke) setWorktreeRemovalPreapproved(repoKey, false); } });
+    repoKey = fixture.repoKey;
+    setWorktreeRemovalPreapproved(repoKey, true);
+    t.after(() => setWorktreeRemovalPreapproved(repoKey, false));
+    fixture.ctx.hasUI = false;
+    fixture.ctx.ui.input = async () => { throw new Error("Preapproval must not prompt"); };
+    const execute = () => fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+    if (revoke) {
+      await assert.rejects(execute(), /preauthorization was revoked/);
+      assert.equal(fixture.stoppedLeadCount(), 0);
+      assert.deepEqual(fixture.removals, []);
+      assert.ok(fixture.assignment());
+    } else {
+      const result = await execute();
+      assert.equal(result.details.checkout_removed, true);
+      assert.equal(result.details.assignment_retired, true);
+      assert.equal(result.details.forced, false);
+      assert.equal(fixture.stoppedLeadCount(), 1);
+    }
+  }
+});
+
+test("Manager pending review cannot consume a replacement from a stale prompt", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  const original = fixture.runtime.pendingRemovals(fixture.ctx)[0]!;
+  fixture.ctx.ui.input = async () => {
+    fixture.removalEntries.push({ type: "custom", customType: "pi-herdsman-worktree-removal", data: { ...original, requestId: "replacement-request" } });
+    return "remove";
+  };
+  await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx), /request changed/);
+  assert.equal(fixture.runtime.pendingRemovals(fixture.ctx)[0]?.requestId, "replacement-request");
+  assert.deepEqual(fixture.removals, []);
+  assert.equal(fixture.lockCount(), 0);
+});
+
+test("Manager pending review dismissal consumes only selected intent without operation locks", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  let selection = 0;
+  fixture.ctx.ui.select = async (_title: string, values: string[]) => selection++ === 0 ? values[0] : "Dismiss request";
+  await fixture.runtime.reviewRemovals(fixture.ctx);
+  assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+  assert.deepEqual(fixture.removals, []);
+  assert.equal(fixture.lockCount(), 0);
+});
+
+test("Manager pending intent follows only native active branch and session without restored authority", async (t) => {
+  const fixture = await managerRemovalFixture(t);
+  fixture.ctx.hasUI = false;
+  const first = await fixture.runtime.executeStaff("request", { action: "remove", branch: "feat/remove-test" }, undefined, undefined, fixture.ctx);
+  const sessionId = fixture.ctx.sessionManager.getSessionId();
+  fixture.ctx.sessionManager.getBranch = () => [];
+  assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+  fixture.ctx.sessionManager.getBranch = () => fixture.removalEntries;
+  fixture.ctx.sessionManager.getSessionId = () => "another-session";
+  assert.deepEqual(fixture.runtime.pendingRemovals(fixture.ctx), []);
+  fixture.ctx.sessionManager.getSessionId = () => sessionId;
+  assert.equal(fixture.runtime.pendingRemovals(fixture.ctx)[0]?.requestId, first.details.request_id);
+  fixture.ctx.hasUI = true;
+  fixture.ctx.ui.input = async () => {
+    fixture.ctx.sessionManager.getSessionId = () => "another-session";
+    return "remove";
+  };
+  await assert.rejects(fixture.runtime.removeWorktree("feat/remove-test", fixture.ctx), /request changed/);
+  fixture.ctx.sessionManager.getSessionId = () => sessionId;
+  assert.equal(fixture.runtime.pendingRemovals(fixture.ctx)[0]?.requestId, first.details.request_id);
+  assert.deepEqual(fixture.removals, []);
+  assert.equal(fixture.lockCount(), 0);
 });
 
 test("Manager removal rejects a replaced Manager after confirmation", async (t) => {
@@ -5722,6 +6015,7 @@ async function managerDelegateAssignmentTest(
   registerExtension!(pi.pi as never);
   try {
     const ctx = fakeContext(pi.entries) as any;
+    attachManagerJournal(t, pi, ctx);
     ctx.isProjectTrusted = () => projectTrusted;
     await pi.events.get("session_start")![0](undefined, ctx);
     await pi.commandOptions.get("manager").handler("", ctx);
@@ -5863,21 +6157,16 @@ async function managerDelegateAssignmentTest(
     );
     assert.equal(assignment?.id, childSession);
     const managerCommand = pi.commandOptions.get("manager")!;
-    assert.deepEqual(managerCommand.getArgumentCompletions(""), [
-      { value: "leave", label: "leave" },
-      { value: "remove", label: "remove" },
-    ]);
-    assert.deepEqual(managerCommand.getArgumentCompletions("rem"), [
-      { value: "remove", label: "remove" },
-    ]);
     assert.deepEqual(managerCommand.getArgumentCompletions("remove herds"), [
       { value: `remove ${assignment.branch}`, label: assignment.branch },
     ]);
-    assert.deepEqual(managerCommand.getArgumentCompletions("remove"), [
+    assert.equal(managerCommand.getArgumentCompletions("remove")[0].value, "remove");
+    assert.deepEqual(managerCommand.getArgumentCompletions("remove "), [
       { value: `remove ${assignment.branch}`, label: assignment.branch },
     ]);
     let confirmationPrompts = 0;
     ctx.hasUI = true;
+    ctx.mode = "rpc";
     ctx.ui.input = async () => {
       confirmationPrompts++;
       return "cancel";
@@ -5905,12 +6194,10 @@ async function managerDelegateAssignmentTest(
       undefined,
       ctx,
     );
-    assert.deepEqual(requestedTool.details, {
-      ok: false,
-      action: "remove",
-      branch: assignment.branch,
-      confirmation_required: true,
-    });
+    assert.equal(requestedTool.details.ok, false);
+    assert.equal(requestedTool.details.confirmation_required, true);
+    assert.equal(requestedTool.details.pending, true);
+    assert.equal(typeof requestedTool.details.request_id, "string");
     assert.equal(confirmationPrompts, 0);
     assert.equal(
       pi.calls.some((args) => args[0] === "agent" && args[1] === "stop"),

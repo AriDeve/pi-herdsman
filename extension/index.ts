@@ -369,7 +369,7 @@ ${FILE_HANDOFF_GUIDANCE}`;
 const SUPERVISION_EVENT_GUIDANCE =
   "Supervision is event-driven. Do not poll staff tools, send repeated messages, or sleep solely to wait for Lead progress. When no independent work remains, end the turn; incoming Lead updates resume coordination.";
 const MANAGER_ROLE_CONTRACT = `## Manager role
-You are the verified Manager for this Pi session. Supervise eligible Leads in your verified project worktree group. Manage project execution only through exact current project assignments; supervision alone grants no Agent ownership or project lifecycle authority. Configuration changes operating guidance and ordinary tool availability, never authority. Project execution belongs to assigned Leads and their Agent trees. Coordination messages and reports are nonterminal and do not establish completion. Use remove_worktree only for an explicitly requested checkout-removal action; never infer removal from completion, review, or inactivity. The tool returns confirmation_required without removal or waiting for input. Direct the user to /manager remove <branch> or the Manager overview for independent human confirmation, then continue unrelated coordination. Do not repeat or poll the tool for confirmation; its result is not evidence of removal.
+You are the verified Manager for this Pi session. Supervise eligible Leads in your verified project worktree group. Manage project execution only through exact current project assignments; supervision alone grants no Agent ownership or project lifecycle authority. Configuration changes operating guidance and ordinary tool availability, never authority. Project execution belongs to assigned Leads and their Agent trees. Coordination messages and reports are nonterminal and do not establish completion. Use remove_worktree only for an explicitly requested checkout-removal action; never infer removal from completion, review, inactivity, or pending intent. Exact-repository human preauthorization skips only the additional per-removal prompt; all current authority, identity, occupancy and cleanliness guards still apply. Otherwise the tool records durable session-branch review intent and returns confirmation_required with a request_id without removing or waiting for input. Direct the user to /manager remove or the Manager overview for independent human review, then continue unrelated coordination. Pending intent and restored requests confer no deletion authority. Do not repeat or poll for confirmation; only verified removal and assignment retirement establish success.
 ${SUPERVISION_EVENT_GUIDANCE}`;
 const SUPERVISION_CONTEXT_TYPE = "pi-herdsman-supervision-context";
 const SUPERVISOR_STATE_TYPE = "pi-herdsman-supervisor-state";
@@ -1756,16 +1756,19 @@ function registerHerdsman(pi: ExtensionAPI): void {
             const input = prefix.trimStart();
             const [command, branchPrefix] = input.split(/\s+/u);
             if (!command)
-              return ["leave", "remove"].map((value) => ({
+              return ["leave", "remove", "remove-preapproval", "settings"].map((value) => ({
                 value,
                 label: value,
               }));
+            if (command === "remove-preapproval" && input.includes(" "))
+              return ["on", "off"].filter(value => value.startsWith(branchPrefix ?? "")).map(value => ({ value: `remove-preapproval ${value}`, label: value }));
             if (command !== "remove")
               return input.includes(" ")
                 ? null
-                : ["leave", "remove"]
+                : ["leave", "remove", "remove-preapproval", "settings"]
                     .filter((value) => value.startsWith(command))
                     .map((value) => ({ value, label: value }));
+            if (input === "remove") return [{ value: "remove", label: "Review pending removals" }];
             if (input.trim().split(/\s+/u).length > 2) return null;
             const lease = leadRuntime.managerLease;
             if (!lease) return [];
@@ -1786,7 +1789,23 @@ function registerHerdsman(pi: ExtensionAPI): void {
           },
           handler: async (rawArgs: string, ctx: ExtensionCommandContext) => {
             const args = rawArgs.trim().split(/\s+/u).filter(Boolean);
+            if (args[0] === "remove-preapproval") {
+              if (args.length !== 2 || !["on", "off"].includes(args[1]!)) {
+                ctx.ui.notify("Usage: /manager remove-preapproval on|off", "error");
+                return;
+              }
+              await leadRuntimes.projectRuntime!.removalPreapproval(args[1] === "on", ctx);
+              return;
+            }
+            if (args[0] === "settings" && args.length === 1) {
+              await leadRuntimes.projectRuntime!.removalSettings(ctx);
+              return;
+            }
             if (args[0] === "remove") {
+              if (args.length === 1) {
+                await leadRuntimes.projectRuntime!.reviewRemovals(ctx);
+                return;
+              }
               if (args.length !== 2) {
                 ctx.ui.notify("Usage: /manager remove <branch>", "error");
                 return;
@@ -2050,7 +2069,7 @@ function registerHerdsman(pi: ExtensionAPI): void {
           name: "remove_worktree",
           label: "remove worktree",
           description:
-            "Request human confirmation for an explicitly requested assigned project checkout removal. Validates without removing or waiting; the user completes removal through /manager remove <branch> or the Manager overview. Continue unrelated coordination without repeating or polling this tool.",
+            "Remove an explicitly requested assigned project checkout under fresh safety checks when a human preauthorized this exact repository. Otherwise record durable active-session-branch review intent and promptly return confirmation_required, pending and request_id; the user reviews through /manager remove or the Manager overview. Pending intent never authorizes removal. Preserve Git branch and conversation; report physical removal separately from assignment retirement. Continue unrelated coordination without polling.",
           parameters: staffBranchParameters,
           promptSnippet: undefined,
           execute: (

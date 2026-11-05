@@ -26,7 +26,8 @@ Two preferences can be overridden for a trusted project in Pi's
 }
 ```
 
-Only `autoActivateManager` and `contextRetirement` are project-overridable.
+Only `autoActivateManager` and `contextRetirement` are project-overridable;
+`worktreeRemovalPreapprovedRepos` is user-only.
 Built-in defaults are overlaid by the global configuration, then by explicitly
 set project values. An omitted project property inherits the global value;
 explicit `false` overrides global `true`. Project overrides apply only when Pi
@@ -50,7 +51,8 @@ schema is:
   "contextRetirement": true,
   "autoActivateManager": false,
   "inlineAttachmentLimitBytes": 131072,
-  "mailboxPayloadLimitBytes": 131072
+  "mailboxPayloadLimitBytes": 131072,
+  "worktreeRemovalPreapprovedRepos": []
 }
 ```
 
@@ -64,6 +66,7 @@ An absent file means these defaults:
 | `autoActivateManager`        |              false | boolean                                           |
 | `inlineAttachmentLimitBytes` | `131072` (128 KiB) | integer from 1024 (1 KiB) through 1048576 (1 MiB) |
 | `mailboxPayloadLimitBytes`   | `131072` (128 KiB) | integer from 1024 (1 KiB) through 1048576 (1 MiB) |
+| `worktreeRemovalPreapprovedRepos` | `[]` | array of absolute repository keys |
 
 Malformed JSON, a non-object root, unknown fields, and invalid known values
 are errors. Reads do not create the directory or file. Herdsman's human
@@ -119,6 +122,21 @@ Placement affects future starts, not existing agents. `tab` uses one lead-owned
 agents tab, `subtree` gives each lead-direct agent its own tab, and `split`
 splits from the caller's pane. Nested delegation always splits in its owner's
 current tab.
+
+## Worktree removal preauthorization
+
+By default every Manager checkout removal needs a human to type `remove`.
+`worktreeRemovalPreapprovedRepos` lists exact repository keys (the Git common
+directory of a Manager's verified repository) for which the `remove_worktree`
+tool may run the guarded removal without that extra prompt. It is read only from
+this user-wide file; project settings and repository content cannot set or
+inherit it, and project settings reject the field. Use `/manager
+remove-preapproval on|off` or the Manager `Settings` menu: enabling names the
+repository and requires typing `enable`, revoking takes effect immediately, and
+other repositories' entries are preserved. The list is read fresh before each
+removal, so revocation also stops an operation that has not yet reached Herdr.
+Preauthorization does not relax authority, identity, occupancy, cleanliness, or
+lock checks and never triggers removal by itself.
 
 ## Reset
 

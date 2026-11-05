@@ -39,3 +39,10 @@ ownership.
 - Other Herdsman configuration fields remain global-only.
 - Project and global Agent-definition composition is unaffected.
 - No additional durable state or generalized inheritance mechanism is added.
+
+## Later note
+
+[ADR 0027](0027-repository-scoped-manager-removal-approval.md) deliberately
+keeps worktree-removal preauthorization out of project settings: it is a
+user-only global grant, and this decision's project overrides still cover only
+the two preferences above.
