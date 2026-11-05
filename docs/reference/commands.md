@@ -312,13 +312,19 @@ removing anything, and the status line shows `<N> removal review pending ·
 recorded target and then uses the confirmation above; the typed branch form also
 resolves a matching pending request. Approval, cancelled confirmation,
 dismissal, and `/manager leave` consume only the exact request, and each
-consumption is verified in the persisted native session first. Reviewing a
-recorded request rejects a stale target. Bare `/manager remove` with nothing
-pending shows a notice. A pending request is restored after reload of the same
-session branch for review only and never authorizes removal or restores Manager
-authority. If leave commits but consumption cannot be verified, Manager mode
-still ends and the error reports that uncertainty. Malformed removal entries
-are ignored. See
+consumption is verified in the persisted native session first. If aborting a
+confirmation also fails to persist its cancellation, both errors are reported.
+Reviewing a recorded request rejects a stale target. Bare `/manager remove` with
+nothing pending shows a notice. A pending request is restored after reload of
+the same session branch for review only and never authorizes removal or restores
+Manager authority; the status line appears only in an active Manager and returns
+when Manager mode is re-entered. Leave first persists and reads back the Lead
+role and the latest removal entry, even when a failed consuming write has
+already cleared the in-memory pending list; if that proof fails, leave rolls
+back to Manager or suspends the role and keeps the lease. After the role
+commits, leave attempts each pending request once. If any consumption cannot be
+verified, Manager mode still ends and the error lists the affected request IDs.
+Malformed removal entries are ignored. See
 [Staff tools](staff.md#remove_worktree) for the result contract.
 
 `/manager remove-preapproval on|off` enables or revokes removal preauthorization

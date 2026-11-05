@@ -245,7 +245,9 @@ Run:
 
 Leaving Manager mode preserves project assignments. Current Herdr topology is
 derived again when work is observed or resumed. A later Manager can continue
-the same repository and branch-based work.
+the same repository and branch-based work. Leave consumes pending removal reviews
+after committing the role exit. If consumption cannot then be verified, leave
+still completes and reports the affected requests.
 
 ## Use Chief only for the next supervision layer
 

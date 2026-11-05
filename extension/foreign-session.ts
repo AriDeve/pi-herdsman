@@ -144,19 +144,38 @@ export function assertPersistedCustomEntry(
   customType: string,
   data: unknown,
 ): void {
-  const fail = () => new Error("Native session persistence could not be verified");
-  if (snapshot.getSessionId() !== sessionId || branch.length === 0) throw fail();
-  const persisted = new Map(snapshot.getEntries().map(entry => [entry.id, entry]));
+  const fail = () =>
+    new Error("Native session persistence could not be verified");
+  if (snapshot.getSessionId() !== sessionId || branch.length === 0)
+    throw fail();
+  const persisted = new Map(
+    snapshot.getEntries().map((entry) => [entry.id, entry]),
+  );
   let parentId: string | null = null;
   for (const entry of branch) {
     const stored = persisted.get(entry.id);
-    if (!entry.id || entry.parentId !== parentId || !stored || stored.parentId !== entry.parentId)
+    if (
+      !entry.id ||
+      entry.parentId !== parentId ||
+      !stored ||
+      stored.parentId !== entry.parentId
+    )
       throw fail();
     parentId = entry.id;
   }
-  const expected = branch.findLast(entry => entry.type === "custom" && entry.customType === customType && isDeepStrictEqual(entry.data, data));
+  const expected = branch.findLast(
+    (entry) =>
+      entry.type === "custom" &&
+      entry.customType === customType &&
+      isDeepStrictEqual(entry.data, data),
+  );
   const stored = expected && persisted.get(expected.id);
-  if (!stored || stored.type !== "custom" || stored.customType !== customType || !isDeepStrictEqual(stored.data, data))
+  if (
+    !stored ||
+    stored.type !== "custom" ||
+    stored.customType !== customType ||
+    !isDeepStrictEqual(stored.data, data)
+  )
     throw fail();
 }
 

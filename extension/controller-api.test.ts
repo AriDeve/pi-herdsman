@@ -4670,28 +4670,27 @@ async function runManagerStartupScenario(
         });
         const components: any[] = [];
         const customCompletions: ((value?: unknown) => void)[] = [];
-        const removalNotices: string[] = [];
-        let removalPrompt: string | undefined;
+        let expectingConfirmation = false;
+        let confirmation: { handleInput(data: string): void } | undefined;
         ctx.hasUI = true;
-        ctx.ui.notify = (message: string) => removalNotices.push(message);
-        ctx.ui.input = async (prompt: string) => {
-          removalPrompt = prompt;
-          return undefined;
-        };
         ctx.ui.custom = (factory: any) =>
           new Promise((resolve) => {
-            customCompletions.push(resolve);
-            components.push(
-              factory(
-                { requestRender: () => undefined },
-                {
-                  fg: (_color: string, text: string) => text,
-                  bold: (text: string) => text,
-                },
-                {},
-                resolve,
-              ),
+            const component = factory(
+              { requestRender: () => undefined },
+              {
+                fg: (_color: string, text: string) => text,
+                bold: (text: string) => text,
+              },
+              {},
+              resolve,
             );
+            if (expectingConfirmation) {
+              expectingConfirmation = false;
+              confirmation = component;
+            } else {
+              customCompletions.push(resolve);
+              components.push(component);
+            }
           });
         await pi.events.get("before_agent_start")![0](
           { systemPrompt: "base", systemPromptOptions: { contextFiles: [] } },
@@ -4726,21 +4725,11 @@ async function runManagerStartupScenario(
         );
         assert.notEqual(removeIndex, -1);
         renderedList.setSelectedIndex(removeIndex);
-        removalNotices.length = 0;
+        expectingConfirmation = true;
         actionMenu.handleInput("\r");
-        await t!.waitFor(() => {
-          assert.match(
-            removalPrompt ?? "",
-            /Remove worktree\n\nBranch: smoke\/recover/u,
-          );
-          assert.match(removalPrompt ?? "", /Type remove to confirm/u);
-        });
-        await t!.waitFor(() => {
-          assert.match(
-            removalNotices.join("\n"),
-            /Removal of smoke\/recover cancelled; no changes made\./u,
-          );
-        });
+        await t!.waitFor(() => assert.ok(confirmation));
+        confirmation!.handleInput("\x1b");
+        await t!.waitFor(() => assert.equal(components.length, 3));
         assert.equal(
           removalCommands.length,
           0,
@@ -4750,7 +4739,6 @@ async function runManagerStartupScenario(
           listProjectAssignments(supervisionRuntime(), repoKey)[0]?.branch,
           "smoke/recover",
         );
-        await t!.waitFor(() => assert.equal(components.length, 3));
 
         hideActiveLead = true;
         started = false;
@@ -4789,21 +4777,13 @@ async function runManagerStartupScenario(
         components[6].handleInput("\x1b[A");
         components[6].handleInput("\r");
         await t!.waitFor(() => assert.equal(components.length, 8));
-        let resolveRemovalInput!: (value: string | undefined) => void;
-        ctx.ui.input = async (prompt: string) => {
-          removalPrompt = prompt;
-          return new Promise<string | undefined>((resolve) => {
-            resolveRemovalInput = resolve;
-          });
-        };
-        removalPrompt = undefined;
+        confirmation = undefined;
+        expectingConfirmation = true;
         components[7].handleInput("\x1b[B");
         components[7].handleInput("\r");
-        await t!.waitFor(() =>
-          assert.match(removalPrompt ?? "", /Type remove to confirm/u),
-        );
+        await t!.waitFor(() => assert.ok(confirmation));
         uiSessionId = randomUUID();
-        resolveRemovalInput(undefined);
+        confirmation!.handleInput("\x1b");
         await overviewPromise;
         assert.equal(
           components.length,

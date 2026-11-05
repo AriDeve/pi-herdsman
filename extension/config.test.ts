@@ -433,7 +433,10 @@ test("worktree removal preapproval is exact, fresh, and independently revocable"
   setWorktreeRemovalPreapproved(first, true);
   setWorktreeRemovalPreapproved(second, true);
   setWorktreeRemovalPreapproved(first, true);
-  assert.deepEqual(readConfig().worktreeRemovalPreapprovedRepos, [first, second]);
+  assert.deepEqual(readConfig().worktreeRemovalPreapprovedRepos, [
+    first,
+    second,
+  ]);
   assert.equal(isWorktreeRemovalPreapproved(`${first}/other`), false);
   assert.equal(isWorktreeRemovalPreapproved(first), true);
   setWorktreeRemovalPreapproved(first, false);
@@ -453,10 +456,20 @@ test("worktree removal preapproval rejects malformed identities and configuratio
     );
   }
   assert.throws(() => setWorktreeRemovalPreapproved("/repo", "true" as never));
-  assert.throws(() => updateConfig("worktreeRemovalPreapprovedRepos", true as never));
-  assert.throws(() => updateConfig("worktreeRemovalPreapprovedRepos", Array(1)));
+  assert.throws(() =>
+    updateConfig("worktreeRemovalPreapprovedRepos", true as never),
+  );
+  assert.throws(() =>
+    updateConfig("worktreeRemovalPreapprovedRepos", Array(1)),
+  );
   realFs.mkdirSync(herdsmanDataRoot(), { recursive: true });
-  for (const value of [true, "/repo", ["/repo", 1], ["relative"], ["/repo/\0bad"]]) {
+  for (const value of [
+    true,
+    "/repo",
+    ["/repo", 1],
+    ["relative"],
+    ["/repo/\0bad"],
+  ]) {
     realFs.writeFileSync(
       herdsmanConfigPath(),
       JSON.stringify({ worktreeRemovalPreapprovedRepos: value }),

@@ -48,9 +48,14 @@ request.
   for the same branch; the stale request is dismissed first.
 - **Leave.** Before the leave commit point (persisted Lead role and
   coordinator state), failure rolls back to Manager and leaves intent pending.
-  After it, pending requests are resolved as left. If that consumption cannot be
-  verified, the role exit still completes and the partial state is reported;
-  an unconsumed request can be restored for review in a Lead session but never
+  When the branch holds any valid removal history, the role and the latest
+  removal entry must be read back from the native session first, even if a
+  failed consuming write already emptied the in-memory pending list. If
+  rollback cannot be proven, the role is suspended and the lease kept. After the
+  commit point, each distinct pending request is attempted once as left; one
+  failure does not skip the rest. If consumption cannot be verified, the role
+  exit still completes and the partial state names the affected requests; an
+  unconsumed request can be restored for review in a Manager session but never
   carries removal authority. This is not an atomic transaction.
 - **Isolation.** Entries are read only from the active native branch and are
   bound to the current session identity. Entries outside that branch cannot

@@ -209,7 +209,9 @@ assignment retirement; physical outcome fields are absent.
 The pending request is review intent recorded on the active Pi session branch.
 It is acknowledged only after Herdsman reads it back from the persisted native
 session; if that proof is unavailable the call fails instead of returning
-`pending`. It is not authorization. A stale pending request for the same branch
+`pending`. A session without a native session-file identity cannot record a
+pending request; the rejected call does not append one. Intent is not
+authorization. A stale pending request for the same branch
 neither blocks nor authorizes a fresh request for the current target. Repeating the request for the same current assignment
 and checkout reuses the `request_id`; a changed assignment or checkout replaces
 it. Direct the user to `/manager remove` (status line guidance) and continue

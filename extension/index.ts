@@ -1756,19 +1756,27 @@ function registerHerdsman(pi: ExtensionAPI): void {
             const input = prefix.trimStart();
             const [command, branchPrefix] = input.split(/\s+/u);
             if (!command)
-              return ["leave", "remove", "remove-preapproval", "settings"].map((value) => ({
-                value,
-                label: value,
-              }));
+              return ["leave", "remove", "remove-preapproval", "settings"].map(
+                (value) => ({
+                  value,
+                  label: value,
+                }),
+              );
             if (command === "remove-preapproval" && input.includes(" "))
-              return ["on", "off"].filter(value => value.startsWith(branchPrefix ?? "")).map(value => ({ value: `remove-preapproval ${value}`, label: value }));
+              return ["on", "off"]
+                .filter((value) => value.startsWith(branchPrefix ?? ""))
+                .map((value) => ({
+                  value: `remove-preapproval ${value}`,
+                  label: value,
+                }));
             if (command !== "remove")
               return input.includes(" ")
                 ? null
                 : ["leave", "remove", "remove-preapproval", "settings"]
                     .filter((value) => value.startsWith(command))
                     .map((value) => ({ value, label: value }));
-            if (input === "remove") return [{ value: "remove", label: "Review pending removals" }];
+            if (input === "remove")
+              return [{ value: "remove", label: "Review pending removals" }];
             if (input.trim().split(/\s+/u).length > 2) return null;
             const lease = leadRuntime.managerLease;
             if (!lease) return [];
@@ -1791,10 +1799,16 @@ function registerHerdsman(pi: ExtensionAPI): void {
             const args = rawArgs.trim().split(/\s+/u).filter(Boolean);
             if (args[0] === "remove-preapproval") {
               if (args.length !== 2 || !["on", "off"].includes(args[1]!)) {
-                ctx.ui.notify("Usage: /manager remove-preapproval on|off", "error");
+                ctx.ui.notify(
+                  "Usage: /manager remove-preapproval on|off",
+                  "error",
+                );
                 return;
               }
-              await leadRuntimes.projectRuntime!.removalPreapproval(args[1] === "on", ctx);
+              await leadRuntimes.projectRuntime!.removalPreapproval(
+                args[1] === "on",
+                ctx,
+              );
               return;
             }
             if (args[0] === "settings" && args.length === 1) {

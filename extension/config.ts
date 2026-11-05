@@ -68,7 +68,9 @@ const CONFIG_KEYS = new Set<ConfigKey>([
 ]);
 
 function validRepoIdentity(value: unknown): value is string {
-  return typeof value === "string" && isAbsolute(value) && !value.includes("\0");
+  return (
+    typeof value === "string" && isAbsolute(value) && !value.includes("\0")
+  );
 }
 
 function validRepoIdentities(value: unknown): value is string[] {
@@ -118,7 +120,8 @@ function parseRawConfig(content: string): Partial<HerdsmanConfig> {
       throw new Error(
         "Invalid Pi Herdsman config field worktreeRemovalPreapprovedRepos",
       );
-    result.worktreeRemovalPreapprovedRepos = record.worktreeRemovalPreapprovedRepos;
+    result.worktreeRemovalPreapprovedRepos =
+      record.worktreeRemovalPreapprovedRepos;
   }
   for (const key of [
     "inlineAttachmentLimitBytes",
@@ -143,7 +146,11 @@ function readRawConfig(): Partial<HerdsmanConfig> {
 }
 
 export function readConfig(): HerdsmanConfig {
-  return { ...DEFAULT_CONFIG, worktreeRemovalPreapprovedRepos: [], ...readRawConfig() };
+  return {
+    ...DEFAULT_CONFIG,
+    worktreeRemovalPreapprovedRepos: [],
+    ...readRawConfig(),
+  };
 }
 
 type ProjectContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
@@ -396,7 +403,8 @@ export function updateConfig<K extends ConfigKey>(
 }
 
 export function isWorktreeRemovalPreapproved(repoKey: string): boolean {
-  if (!validRepoIdentity(repoKey)) throw new Error("Invalid repository identity");
+  if (!validRepoIdentity(repoKey))
+    throw new Error("Invalid repository identity");
   return readConfig().worktreeRemovalPreapprovedRepos.includes(repoKey);
 }
 
@@ -404,8 +412,10 @@ export function setWorktreeRemovalPreapproved(
   repoKey: string,
   enabled: boolean,
 ): void {
-  if (!validRepoIdentity(repoKey)) throw new Error("Invalid repository identity");
-  if (typeof enabled !== "boolean") throw new Error("Invalid preapproval value");
+  if (!validRepoIdentity(repoKey))
+    throw new Error("Invalid repository identity");
+  if (typeof enabled !== "boolean")
+    throw new Error("Invalid preapproval value");
   updateRawConfig((current) => {
     const repos = current.worktreeRemovalPreapprovedRepos ?? [];
     if (repos.includes(repoKey) === enabled) return false;
