@@ -34,14 +34,17 @@ _Realtime live demo of a manager > lead > agent workflow._
 Requires OMP 18.12.3 or newer and Herdr 0.9.1 or newer. Install this checkout:
 
 ```sh
-npm ci --ignore-scripts
-npm run build
+bun install --frozen-lockfile --no-save --ignore-scripts
+bun run build
 omp plugin link .
 herdr integration install omp
 ```
 
 The `omp.extensions` manifest loads the bundle so parent and child build fingerprints cover the complete runtime.
 The upstream `install.sh` and Docker recipes install Pi, not this OMP checkout.
+The Bun preparation route is verified in a fresh worktree with native OMP
+18.12.3, as well as an already-installed worktree. See
+[Dependency availability](docs/development/validation.md#dependency-availability).
 
 Start Herdr in your project, then start OMP inside its pane:
 
@@ -64,6 +67,11 @@ Open the human Agent-management surface at any time with:
 ```
 
 It also exposes `Session stats` for the current Pi session and its owned Agent sessions; in active Manager mode, it includes current assigned project Leads and their owned Agent trees.
+
+Native OMP `/stats` also links newly delegated sessions by their immutable
+creating transcript. Its historical trace grouping is separate from current
+Herdsman ownership and project authority; see
+[Native OMP accounting and traces](docs/reference/agent-states.md#native-omp-accounting-and-traces).
 
 See [Getting started](docs/getting-started.md) for prerequisites, configuration,
 observability, and the complete first-use path.

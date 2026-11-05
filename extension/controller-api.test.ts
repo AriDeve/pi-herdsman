@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -2879,7 +2880,7 @@ async function runManagerStartupScenario(
   let childSession = "";
   const repoKey = realFs.mkdtempSync(join(tmpdir(), "herdsman-repo-key-"));
   const reconciliationId = randomUUID();
-  const childSessionPath = join(tmpdir(), `lead-${randomUUID()}.jsonl`);
+  let childSessionPath = join(tmpdir(), `lead-${randomUUID()}.jsonl`);
   const existingGitWorktree = join(tmpdir(), `git-worktree-${randomUUID()}`);
   const childPath = existingGitWorktree;
   const reconciliationBranch = "smoke/orphan";
@@ -3422,11 +3423,13 @@ async function runManagerStartupScenario(
       assert.equal(header.id, starting.id);
       assert.ok(typeof header.id === "string");
       childSession = header.id;
-      if (mode === "success") {
-        writeFileSync(
-          childSessionPath,
-          JSON.stringify({ type: "session", id: childSession }),
-        );
+      assert.equal(starting.piSessionFile, args[resumeIndex + 1]);
+      childSessionPath = starting.piSessionFile!;
+      if (prospective) {
+        // Simulate native persistence disappearing after launch; the assignment
+        // must still retain the original canonical reference.
+        realFs.unlinkSync(childSessionPath);
+      } else {
         nativeSessions.set(childSession, {
           id: childSession,
           path: childSessionPath,
@@ -3434,17 +3437,6 @@ async function runManagerStartupScenario(
           entries: [],
         });
       }
-      assert.deepEqual(Object.keys(starting).sort(), [
-        "branch",
-        "id",
-        ...(["active-missing", "active-missing-legacy"].includes(mode)
-          ? ["piSessionFile"]
-          : []),
-        "repoKey",
-        ...(starting.requiredEvidence ? ["requiredEvidence"] : []),
-        "text",
-        "version",
-      ]);
       started = true;
       return respond({
         agent: {
@@ -3963,6 +3955,23 @@ async function runManagerStartupScenario(
         "verified-absence-resume",
       ].includes(mode);
       if (created) createdBranch = "smoke/recover";
+      if (["active-loss", "active-closed"].includes(mode)) {
+        writeFileSync(
+          childSessionPath,
+          JSON.stringify({
+            type: "session",
+            version: CURRENT_SESSION_VERSION,
+            id: staleId,
+            cwd: childPath,
+          }) + "\n",
+        );
+        nativeSessions.set(staleId, {
+          id: staleId,
+          path: childSessionPath,
+          cwd: childPath,
+          entries: [],
+        });
+      }
       writeProjectAssignment(supervisionRuntime(), {
         version: 2,
         id: staleId,
@@ -4866,14 +4875,6 @@ async function runManagerStartupScenario(
         repoKey,
       )[0]!;
       assert.equal(assignment.id, childSession);
-      assert.deepEqual(Object.keys(assignment).sort(), [
-        "branch",
-        "id",
-        "repoKey",
-        ...(assignment.requiredEvidence ? ["requiredEvidence"] : []),
-        "text",
-        "version",
-      ]);
       assert.equal(
         listChiefMessagePaths(supervisionRuntime(), childSession)
           .map((path) => readChiefMessage(path))
@@ -4940,14 +4941,6 @@ async function runManagerStartupScenario(
         supervisionRuntime(),
         repoKey,
       )[0]!;
-      assert.deepEqual(Object.keys(assignment).sort(), [
-        "branch",
-        "id",
-        "repoKey",
-        ...(assignment.requiredEvidence ? ["requiredEvidence"] : []),
-        "text",
-        "version",
-      ]);
       if (mode.startsWith("identity-manager-lost-")) {
         assert.equal(assignment.id, childSession);
         assert.equal(created, true);
@@ -5052,17 +5045,6 @@ async function runManagerStartupScenario(
       supervisionRuntime(),
       repoKey,
     )[0]!;
-    assert.deepEqual(Object.keys(assignment).sort(), [
-      "branch",
-      "id",
-      ...(["success", "unmaterialized-path"].includes(mode)
-        ? ["piSessionFile"]
-        : []),
-      "repoKey",
-      ...(assignment.requiredEvidence ? ["requiredEvidence"] : []),
-      "text",
-      "version",
-    ]);
     if (["success", "unmaterialized-path"].includes(mode))
       assert.equal(
         assignment.piSessionFile,

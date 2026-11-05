@@ -25,21 +25,21 @@ another worktree. A user-wide fallback can instead be configured with
 Override it for one invocation with:
 
 ```sh
-npm run smoke -- chief-tree --model 'provider/model:thinking'
+bun run smoke -- chief-tree --model 'provider/model:thinking'
 ```
 
 Run the harness from an ordinary repository shell:
 
 ```sh
-npm run smoke
-npm run smoke -- core
-npm run smoke -- continuation
-npm run smoke -- chief-tree
-npm run smoke -- manager-recovery
-npm run smoke -- terminal-failure
+bun run smoke
+bun run smoke -- core
+bun run smoke -- continuation
+bun run smoke -- chief-tree
+bun run smoke -- manager-recovery
+bun run smoke -- terminal-failure
 ```
 
-`npm run smoke` runs the default live `core` scenario. The runner builds the
+`bun run smoke` runs the default live `core` scenario. The runner builds the
 current candidate, creates isolated Herdr and Pi configuration/session state,
 starts an owned named headless Herdr server, and creates an owned parent
 workspace before launching the disposable nested session. It routes commands
@@ -61,13 +61,13 @@ The harness also supports an opt-in Pi-native faux provider for seven bounded
 scenarios:
 
 ```sh
-npm run smoke -- core --simulated
-npm run smoke -- continuation --simulated
-npm run smoke -- chief-tree --simulated
-npm run smoke -- supervisor-agent --simulated
-npm run smoke -- terminal-failure --simulated
-npm run smoke -- agent-terminal-failure --simulated
-npm run smoke -- manager-handoff --simulated
+bun run smoke -- core --simulated
+bun run smoke -- continuation --simulated
+bun run smoke -- chief-tree --simulated
+bun run smoke -- supervisor-agent --simulated
+bun run smoke -- terminal-failure --simulated
+bun run smoke -- agent-terminal-failure --simulated
+bun run smoke -- manager-handoff --simulated
 ```
 
 Simulation supplies model decisions only. Pi still runs its real agent loop and
@@ -170,8 +170,8 @@ Live smoke requires a configured smoke model or an explicit `--model`
 override. Live smoke uses real provider credentials and usage. Live scenarios may fail; running one is not
 evidence of a pass. It does not replace or reconfigure the installed
 Herdsman, copy normal Pi settings or extensions, or run as part of
-`npm run validate`. Run selected scenarios according to the change being
-verified; `npm run smoke` defaults to `core`.
+`bun run validate`. Run selected scenarios according to the change being
+verified; `bun run smoke` defaults to `core`.
 
 ## Runtime preflight
 

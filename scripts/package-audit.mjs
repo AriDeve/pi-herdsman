@@ -9,17 +9,12 @@ import {
 
 const root = process.cwd();
 const normalize = (path) => path.replace(/^package\//u, "");
-const npmExecPath = process.env.npm_execpath;
-if (!npmExecPath) throw new Error("package audit must run through npm");
 const packed = JSON.parse(
-  execFileSync(
-    process.execPath,
-    [npmExecPath, "pack", "--dry-run", "--json", "--ignore-scripts"],
-    {
-      cwd: root,
-      encoding: "utf8",
-    },
-  ),
+  execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+    cwd: root,
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  }),
 );
 const files = Object.values(packed)[0]?.files ?? [];
 const allowed =

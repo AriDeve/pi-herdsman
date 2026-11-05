@@ -58,6 +58,7 @@ import support, {
   WORKSPACE,
   agentFromState,
   controlMarker,
+  defaultFixtureIdentity,
   fakeContext,
   fakePi,
   fakeAgentContext,
@@ -3852,7 +3853,7 @@ test("delegating agents receive only their allowed definition roster", async () 
   const controllerState = {
     ...managedState("delegating-agent"),
     piSessionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    piSessionFile: "/tmp/registered-agent.jsonl",
+    piSessionFile: defaultFixtureIdentity.piSessionFile,
   };
   assert.equal(readAgentState(mailbox), undefined);
   const entries = [
@@ -4194,7 +4195,7 @@ test("delegating agents do not receive Manager supervisor projections", async ()
   const controllerState = {
     ...managedState("manager-projection-agent"),
     piSessionId: sessionId,
-    piSessionFile: "/tmp/registered-agent.jsonl",
+    piSessionFile: defaultFixtureIdentity.piSessionFile,
   };
   const baseExec = agentControllerExecutor(controllerState);
   const pi = fakePi({

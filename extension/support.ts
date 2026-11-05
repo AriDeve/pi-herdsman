@@ -741,7 +741,11 @@ export const defaultFixtureIdentity: FixtureIdentity = {
   paneId: "registered-pane",
   tabId: "registered-tab",
   piSessionId: DEFAULT_PI_SESSION_ID,
-  piSessionFile: "/tmp/registered-agent.jsonl",
+  piSessionFile: join(
+    PI_AGENT_ROOT,
+    "sessions",
+    `agent_${DEFAULT_PI_SESSION_ID}.jsonl`,
+  ),
 };
 
 export function recoveryIdentity(label: string): FixtureIdentity {
@@ -807,6 +811,24 @@ export function fakeContext(
   entries: unknown[] = [],
   branch: unknown[] = entries,
 ): Context {
+  const rootSessionFile = join(
+    PI_AGENT_ROOT,
+    "sessions",
+    `root_${LEAD_SESSION_ID}.jsonl`,
+  );
+  if (!realFs.existsSync(rootSessionFile)) {
+    realFs.mkdirSync(join(PI_AGENT_ROOT, "sessions"), { recursive: true });
+    realFs.writeFileSync(
+      rootSessionFile,
+      JSON.stringify({
+        type: "session",
+        version: nativeCurrentSessionVersion,
+        id: LEAD_SESSION_ID,
+        cwd: "/tmp",
+        timestamp: new Date().toISOString(),
+      }) + "\n",
+    );
+  }
   return {
     cwd: "/tmp",
     hasUI: false,
@@ -819,7 +841,7 @@ export function fakeContext(
     getContextUsage: () => ({ tokens: 2, contextWindow: 10, percent: null }),
     sessionManager: {
       getSessionId: () => LEAD_SESSION_ID,
-      getSessionFile: () => "/tmp/root.jsonl",
+      getSessionFile: () => rootSessionFile,
       getSessionName: () => undefined,
       getEntries: () => entries,
       getBranch: () => branch,
@@ -839,10 +861,22 @@ export function fakeAgentContext(
   branch: unknown[] = entries,
 ): Context {
   const context = fakeContext(entries, branch);
+  const sessionFile = defaultFixtureIdentity.piSessionFile;
+  if (!realFs.existsSync(sessionFile))
+    realFs.writeFileSync(
+      sessionFile,
+      JSON.stringify({
+        type: "session",
+        version: nativeCurrentSessionVersion,
+        id: DEFAULT_PI_SESSION_ID,
+        cwd: "/tmp",
+        timestamp: new Date().toISOString(),
+      }) + "\n",
+    );
   context.sessionManager = {
     ...context.sessionManager,
     getSessionId: () => "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-    getSessionFile: () => "/tmp/registered-agent.jsonl",
+    getSessionFile: () => sessionFile,
   };
   return context;
 }

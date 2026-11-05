@@ -118,21 +118,21 @@ in `AGENTS.md`.
 During implementation, run the smallest relevant test file first:
 
 ```sh
-npm test -- extension/<area>.test.ts
+bun run test -- extension/<area>.test.ts
 ```
 
 Narrow further when useful:
 
 ```sh
-npm test -- --test-name-pattern="<pattern>" extension/<area>.test.ts
+bun run test -- --test-name-pattern="<pattern>" extension/<area>.test.ts
 ```
 
 Focused tests provide development feedback. Focused tests, smoke testing,
 review, and all intermediate checks must happen before formatting. Do not
 format during those phases. Before handoff, follow the detailed validation
 order in [Development validation](docs/development/validation.md): run
-`npm run format` once as the final pre-commit mutation, then run the read-only
-checks `npm run format:check`, `npm run check`, and `git diff --check` before
+`bun run format` once as the final pre-commit mutation, then run the read-only
+checks `bun run format:check`, `bun run check`, and `git diff --check` before
 staging or committing.
 
 For changes crossing the real Pi/Herdr runtime boundary, prefer the relevant
@@ -140,16 +140,16 @@ simulated smoke scenario first when it covers the behavior. Pi, Herdsman, and
 Herdr still run for real; only model decisions are scripted:
 
 ```sh
-npm run smoke -- core --simulated
-npm run smoke -- continuation --simulated
-npm run smoke -- chief-tree --simulated
-npm run smoke -- terminal-failure --simulated
+bun run smoke -- core --simulated
+bun run smoke -- continuation --simulated
+bun run smoke -- chief-tree --simulated
+bun run smoke -- terminal-failure --simulated
 ```
 
 Use real-model smoke (omit `--simulated`) when validating model decisions,
 instruction adherence, provider behavior, or coverage simulation cannot prove.
-`manager-recovery` is live-only (`npm run smoke -- manager-recovery`).
-Run only relevant scenarios. Smoke is opt-in, and plain `npm run smoke`
+`manager-recovery` is live-only (`bun run smoke -- manager-recovery`).
+Run only relevant scenarios. Smoke is opt-in, and plain `bun run smoke`
 still uses the configured real model. Complete smoke before final
 formatting/validation; see [Smoke testing](docs/development/smoke-testing.md).
 
@@ -161,15 +161,13 @@ formatting/validation; see [Smoke testing](docs/development/smoke-testing.md).
 - Keep separate test files only for source boundaries or required process/module-mock isolation.
 - Add no dependency or fixture abstraction when `node:test` and a few lines suffice.
 
-## Backlog
+## Issue tracking
 
-- The ignored `.backlog/` repository exists only in the main worktree.
-  Run Backlog CLI reads and writes from the worktree where `.backlog/` exists;
-  do not copy, synchronize, or manually edit it in another worktree.
-- For each newly verified material issue, search first, then record the exact
-  reproduction, expected and observed behavior, impact, and evidence through
-  the CLI. Do not file speculative or duplicate issues; report the task ID,
-  impact, and whether it blocks the current work.
+- Use Epiq for newly verified material issues. Search for existing work first,
+  then record the exact reproduction, expected and observed behavior, impact,
+  and evidence. Report the ticket ref and whether it blocks current work.
+- Follow [Issue tracker](docs/agents/issue-tracker.md) for Epiq operations and
+  board conventions.
 
 ## Validation
 

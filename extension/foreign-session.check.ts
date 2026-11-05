@@ -23,6 +23,7 @@ import {
 import {
   findSessionFileById,
   inspectSessionFile,
+  nativeSessionFile,
   readForeignSessionHeader,
 } from "./foreign-session.ts";
 
@@ -140,6 +141,48 @@ export function checkForeignSessionInspection(): void {
       ["user", "assistant", "accounting"],
     );
     assert.equal(readForeignSessionHeader(path)?.id, id);
+    assert.equal(
+      nativeSessionFile({
+        getSessionId: () => id,
+        getSessionFile: () => path,
+      }),
+      path,
+    );
+    assert.throws(
+      () =>
+        nativeSessionFile({
+          getSessionId: () => randomUUID(),
+          getSessionFile: () => path,
+        }),
+      /identity/,
+    );
+    const olderPath = join(directory, `older_${id}.jsonl`);
+    const olderContent = JSON.stringify({ ...header, version: 1 }) + "\n";
+    writeFileSync(olderPath, olderContent);
+    assert.equal(
+      nativeSessionFile({
+        getSessionId: () => id,
+        getSessionFile: () => olderPath,
+      }),
+      olderPath,
+    );
+    assert.equal(readFileSync(olderPath, "utf8"), olderContent);
+    assert.throws(
+      () =>
+        nativeSessionFile({
+          getSessionId: () => "",
+          getSessionFile: () => olderPath,
+        }),
+      /identity/,
+    );
+    assert.throws(
+      () =>
+        nativeSessionFile({
+          getSessionId: () => id,
+          getSessionFile: () => undefined,
+        }),
+      /identity/,
+    );
     const parsedHeader = session.getHeader();
     assert.equal(
       "title" in parsedHeader ? parsedHeader.title : undefined,
@@ -197,6 +240,36 @@ export function checkForeignSessionInspection(): void {
       JSON.stringify({ ...header, id: randomUUID() }) + "\n",
     );
     assert.equal(findSessionFileById(cwd, id), path);
+    // Native child journals live beneath the immediate parent's transcript stem,
+    // including when that parent was itself a delegated child.
+    const childId = randomUUID();
+    const childDirectory = path.slice(0, -6);
+    const childPath = join(childDirectory, `child_${childId}.jsonl`);
+    const grandchildId = randomUUID();
+    const grandchildDirectory = childPath.slice(0, -6);
+    const grandchildPath = join(
+      grandchildDirectory,
+      `nested_${grandchildId}.jsonl`,
+    );
+    mkdirSync(grandchildDirectory, { recursive: true });
+    writeFileSync(childPath, JSON.stringify({ ...header, id: childId }) + "\n");
+    writeFileSync(
+      grandchildPath,
+      JSON.stringify({ ...header, id: grandchildId }) + "\n",
+    );
+    assert.equal(findSessionFileById(cwd, childId), childPath);
+    assert.equal(findSessionFileById(cwd, grandchildId), grandchildPath);
+    assert.equal(findSessionFileById(directory, grandchildId), undefined);
+    const nestedDuplicate = join(
+      childDirectory,
+      `duplicate_${grandchildId}.jsonl`,
+    );
+    writeFileSync(
+      nestedDuplicate,
+      JSON.stringify({ ...header, id: grandchildId }) + "\n",
+    );
+    assert.equal(findSessionFileById(cwd, grandchildId), undefined);
+    rmSync(nestedDuplicate);
     const duplicate = join(bucket, `duplicate_${id}.jsonl`);
     writeFileSync(duplicate, content);
     assert.equal(findSessionFileById(cwd, id), undefined);

@@ -59,7 +59,7 @@ mock.module("./omp-settings.ts", {
   },
 });
 // Load only after installing the synthetic native SDK boundary used by these tests.
-const { agentLaunchArgs, ompLaunchTools } =
+const { agentLaunchArgs, createOmpSessionFile, ompLaunchTools } =
   await import("./agent-definitions.ts");
 const options = { cwd: root, temporaryPaths };
 const definition = {
@@ -84,6 +84,49 @@ function overlay(args: string[]): {
 } {
   return JSON.parse(readFileSync(flagValue(args, "--config"), "utf8"));
 }
+
+test("managed Lead precreation keeps the assigned identity beneath its exact creating transcript", () => {
+  const parentId = "11111111-1111-4111-8111-111111111111";
+  const childId = "22222222-2222-4222-8222-222222222222";
+  const parentPath = join(root, `parent_${parentId}.jsonl`);
+  writeFileSync(
+    parentPath,
+    JSON.stringify({
+      type: "session",
+      version: sdk.CURRENT_SESSION_VERSION,
+      id: parentId,
+      cwd: root,
+      timestamp: new Date().toISOString(),
+    }) + "\n",
+  );
+  const parent = {
+    getSessionId: () => parentId,
+    getSessionFile: () => parentPath,
+  };
+  const path = createOmpSessionFile(root, childId, parent);
+  temporaryPaths.push(path);
+  assert.equal(join(path, ".."), parentPath.slice(0, -6));
+  const header = sdk.parseSessionEntries(readFileSync(path, "utf8"))[0];
+  assert.equal(header.type, "session");
+  assert.equal(header.id, childId);
+  assert.equal(header.cwd, root);
+  assert.throws(
+    () =>
+      createOmpSessionFile(root, childId, {
+        ...parent,
+        getSessionId: () => childId,
+      }),
+    /identity/i,
+  );
+  assert.throws(
+    () =>
+      createOmpSessionFile(root, childId, {
+        ...parent,
+        getSessionFile: () => undefined,
+      }),
+    /session/i,
+  );
+});
 
 test("native child policy restricts tools, protects owner communication, and cannot activate excluded tools", async () => {
   const args = await agentLaunchArgs(

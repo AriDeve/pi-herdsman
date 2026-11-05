@@ -117,6 +117,48 @@ The stale episode is defined by its active request and last qualifying activity;
 first-attention diagnosis is bounded, and repeated reminders do not automatically
 repeat the live capture.
 
+## Native OMP accounting and traces
+
+Fresh delegated Agents and newly assigned managed Leads store their native
+transcript beneath the exact creating session's transcript stem. OMP `/stats`
+classifies that usage as `subagent` and assembles the immediate-parent trace
+before terminal result delivery. Standalone Managers and ordinary Leads keep
+their native root location; supervision alone does not create a trace edge.
+
+Trace ancestry records creation, not current authority. Manager replacement,
+role changes, takeover, and assignment retirement do not reparent existing
+transcripts or grant control through their paths. Herdsman's `Session stats`
+view continues to use current ownership and project assignments independently
+of native historical grouping.
+
+A managed Lead's native-format header is initialized exclusively with its exact
+assignment session ID, and its canonical path is persisted before launch. OMP
+owns all subsequent transcript writes. Continuation and restart resume the
+canonical file; missing or conflicting persisted identity fails closed rather
+than creating a replacement transcript or guessing a parent. Existing flat
+sessions are not relocated or migrated.
+
+With Herdr 0.9.5, canceling startup before native registration can leave an
+`Unknown` pending-launch name reservation that prevents relaunch. The exact
+assignment ID and canonical transcript remain preserved; this does not
+establish successful recovery after early cancellation.
+
+Agent cleanup and worktree retirement do not delete native transcript history.
+References and descendants remain available while OMP's native retention policy
+retains them. Native GC protects a parent when a descendant has active native
+status or was modified within its five-minute write grace. A completed
+descendant outside that grace does not by itself protect an expired parent.
+Cold archive compresses an expired root and moves its transcript-stem subtree
+together.
+Historical paths are not promised to remain readable after native expiration or
+archival; Herdsman does not override native retention.
+
+The installed OMP dashboard has been exercised with Manager → assigned Lead →
+Agent → nested Agent, including active work before terminal delivery. Native
+trace assembly has a six-child-edge limit. Descendants use generic native
+labels rather than Herdsman role names; opening a descendant directly labels
+that selected trace root `Main` without changing its usage category.
+
 ## See also
 
 - [Lifecycle](../concepts/lifecycle.md)

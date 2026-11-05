@@ -8,6 +8,3 @@ conventions returned by Epiq.
 Before creating a ticket, search for existing work. Use the ticket's returned
 ID or ref for subsequent operations. Epiq writes do not implicitly sync:
 synchronize when requested.
-
-The repository's Backlog policy in `AGENTS.md` remains in force for newly
-verified material issues; the Epiq workflow does not replace it.

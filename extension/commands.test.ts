@@ -1,5 +1,6 @@
 import "./support.ts";
 import assert from "node:assert/strict";
+import { CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -3500,6 +3501,7 @@ test("root Lead explicitly enters Manager; a competing root session stays Lead",
     persistedManagerSessionId = `restored-manager-${randomUUID()}`;
     persistedManagerContext.sessionManager.getSessionId = () =>
       persistedManagerSessionId;
+    attachFixtureSession(t, persistedManagerContext);
     await persistedManager.events.get("session_start")![0](
       undefined,
       persistedManagerContext,
@@ -4972,12 +4974,32 @@ test("linked and non-project sessions derive ordinary Lead tools", async () => {
   }
 });
 
+function attachFixtureSession(
+  t: TestContext,
+  ctx: ReturnType<typeof fakeContext>,
+) {
+  const path = join(PI_AGENT_ROOT, `manager-journal-${randomUUID()}.jsonl`);
+  realFs.writeFileSync(
+    path,
+    JSON.stringify({
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: ctx.sessionManager.getSessionId(),
+      cwd: ctx.cwd,
+      timestamp: new Date().toISOString(),
+    }) + "\n",
+  );
+  ctx.sessionManager.getSessionFile = () => path;
+  t.after(() => realFs.rmSync(path, { force: true }));
+  return path;
+}
+
 function attachManagerJournal(
   t: TestContext,
   pi: ReturnType<typeof fakeChiefPi>,
   ctx: ReturnType<typeof fakeContext>,
 ) {
-  const path = join(PI_AGENT_ROOT, `manager-journal-${randomUUID()}.jsonl`);
+  const path = attachFixtureSession(t, ctx);
   const persisted: unknown[] = [];
   const original = pi.pi.appendEntry;
   pi.pi.appendEntry = (customType: string, data: unknown) => {
@@ -4990,7 +5012,6 @@ function attachManagerJournal(
     }
     persisted.splice(0, persisted.length, ...structuredClone(pi.entries));
   };
-  ctx.sessionManager.getSessionFile = () => path;
   nativeSessions.set(path, {
     id: ctx.sessionManager.getSessionId(),
     path,
@@ -14533,7 +14554,7 @@ test("delegating managed Agents focus only fresh owned child-row identities", as
     ...managedState("delegating-parent"),
     paneId: "registered-pane",
     piSessionId: DEFAULT_PI_SESSION_ID,
-    piSessionFile: "/tmp/registered-agent.jsonl",
+    piSessionFile: defaultFixtureIdentity.piSessionFile,
   };
   const childState: ManagedAgentState = {
     ...managedState("owned-child"),
@@ -14965,7 +14986,7 @@ test("valid managed leaf agents receive identity-only TUI presentation", async (
   const state: ManagedAgentState = {
     ...managedState("leaf-agent"),
     piSessionId: DEFAULT_PI_SESSION_ID,
-    piSessionFile: "/tmp/registered-agent.jsonl",
+    piSessionFile: defaultFixtureIdentity.piSessionFile,
   };
   writeAgentState(mailbox, state);
   let currentSessionId = DEFAULT_PI_SESSION_ID;

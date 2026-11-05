@@ -31,6 +31,7 @@ import {
 import type { ErrorCategory } from "./errors.ts";
 import {
   inspectSessionFile,
+  nativeSessionFile,
   type ForeignSessionSnapshot,
 } from "./foreign-session.ts";
 import {
@@ -7193,6 +7194,16 @@ export function createAgentController(
           });
           // Role/profile preflight may have changed while this assignment was prepared.
           assertRootDelegationAllowed();
+          if (!resumed) {
+            if (ctx.sessionManager.getSessionId() !== owner)
+              throw new Error(
+                "Native creating session identity changed before Agent launch",
+              );
+            sessionArgs.push(
+              "--session-dir",
+              nativeSessionFile(ctx.sessionManager).slice(0, -6),
+            );
+          }
           started = await startHerdrAgent(pi, ctx, {
             label,
             runId,

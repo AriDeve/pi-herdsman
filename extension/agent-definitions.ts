@@ -20,7 +20,6 @@ import {
   CONFIG_DIR_NAME,
   getAgentDir,
   CURRENT_SESSION_VERSION,
-  SessionManager,
   parseFrontmatter as parsePiFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -30,6 +29,7 @@ import type {
 import type { discoverContextFiles } from "@oh-my-pi/pi-coding-agent";
 import { snapshotTextFiles } from "./core.ts";
 import { herdsmanTempRoot } from "./storage.ts";
+import { nativeSessionFile } from "./foreign-session.ts";
 
 export const VALID_THINKING_LEVELS = [
   "off",
@@ -1179,8 +1179,15 @@ export async function agentLaunchArgs(
 }
 
 /** Precreate the session identity required by a durable Manager assignment. */
-export function createOmpSessionFile(cwd: string, id: string): string {
-  const directory = SessionManager.getDefaultSessionDir(cwd);
+export function createOmpSessionFile(
+  cwd: string,
+  id: string,
+  parent: Pick<
+    ExtensionContext["sessionManager"],
+    "getSessionId" | "getSessionFile"
+  >,
+): string {
+  const directory = nativeSessionFile(parent).slice(0, -6);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const path = join(
     directory,

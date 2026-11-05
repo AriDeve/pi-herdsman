@@ -139,6 +139,8 @@ import { persistedTranscriptReady as controllerPersistedTranscriptReady } from "
 import {
   inspectSessionFile,
   assertPersistedCustomEntry,
+  findSessionFileById,
+  nativeSessionFile,
 } from "./foreign-session.ts";
 import {
   isWorktreeRemovalPreapproved,
@@ -8023,6 +8025,18 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
               throw new Error(
                 `Work already exists on ${assignment.branch}; resume it with resume_project.`,
               );
+            if (ctx.sessionManager.getSessionId() !== manager.piSessionId)
+              throw new Error(
+                "Native creating Manager session identity changed",
+              );
+            assignment = {
+              ...assignment,
+              piSessionFile: createOmpSessionFile(
+                cwd!,
+                assignment.id,
+                ctx.sessionManager,
+              ),
+            };
             writeProjectAssignment(runtime, assignment);
           },
         );
@@ -8126,6 +8140,18 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
               : {}),
             modelDecision,
           });
+          if (!assignment.piSessionFile) {
+            const canonical = findSessionFileById(cwd!, assignment.id);
+            if (!canonical)
+              throw new Error(
+                "Assigned Lead has no unambiguous canonical native transcript",
+              );
+            assignment = await persistLeadSessionFile(assignment, canonical);
+          }
+          const sessionFile = nativeSessionFile({
+            getSessionId: () => assignment.id,
+            getSessionFile: () => assignment.piSessionFile,
+          });
           await startHerdrAgentInPane(pi, ctx, {
             primaryWorkspaceId,
             workspaceId,
@@ -8135,12 +8161,7 @@ export function createLeadProjectRuntime(host: LeadProjectHost) {
             label: `lead-${id.slice(0, 8)}`,
             runId: id,
             extensionPath: HERDSMAN_EXTENSION_PATH,
-            agentArgs: [
-              ...launchArgs,
-              "--resume",
-              assignment.piSessionFile ??
-                createOmpSessionFile(cwd!, assignment.id),
-            ],
+            agentArgs: [...launchArgs, "--resume", sessionFile],
             signal,
           });
           startedLead = true;

@@ -5,7 +5,7 @@
 Repository handoff is not complete until the current validation gates have been
 run or a concrete environment blocker is recorded.
 
-For the OMP port, `npm run test:omp` checks native lifecycle adaptation, child
+For the OMP port, `bun run test:omp` checks native lifecycle adaptation, child
 capability policies, status/title presentation, project settings, and read-only
 native session inspection. The session inspection check runs through OMP's
 real import adapter under Bun, including physical title slots and blob references.
@@ -20,14 +20,18 @@ targets must remain unexecuted. Deferred MCP discovery must not reintroduce
 forbidden provider schemas after startup policy selection. These checks use
 temporary state, not an external model API; they do not establish real-model
 instruction adherence or external Codex Lite conversion behavior.
-`npm run package:audit` checks the bundled native entry point and packaged skills.
-`bun scripts/omp-response-recovery-check.ts` (after `npm run build`) runs real
+`bun run package:audit` checks the bundled native entry point and packaged skills.
+It requires npm as the package-format inspection tool and runs
+`npm pack --dry-run --json --ignore-scripts` locally; this neither publishes
+the package nor installs dependencies. Bun remains the package-script
+entrypoint and dependency preparation tool.
+`bun scripts/omp-response-recovery-check.ts` (after `bun run build`) runs real
 OMP and Herdsman in an owned, named Herdr session against a scripted loopback
 provider. A managed Agent produces a full report and a later addendum; the check
 verifies result delivery, automatic cleanup, post-cleanup `read_agent_responses`
 recovery of both responses, session continuation for a second assignment, and
 assignment isolation, with no further child model request during recovery.
-`bun scripts/omp-response-recovery-check.ts --interrupt` (after `npm run build`)
+`bun scripts/omp-response-recovery-check.ts --interrupt` (after `bun run build`)
 exercises actual owner controls and a managed Agent with a cancellable native
 tool. The scripted provider verifies accepted-versus-applied guidance, one
 deliberately rejected pending control with unavailable-tool evidence, replacement
@@ -36,12 +40,12 @@ selected-response provenance, and cleanup. Fixture readiness uses native Herdr
 observations without additional model/status tool calls. It does not establish
 strict native queue supersession or real-model adherence.
 `bun scripts/omp-response-recovery-check.ts --project-continuation` (after
-`npm run build`) has a restored Manager delegate a project whose Lead delegates a
+`bun run build`) has a restored Manager delegate a project whose Lead delegates a
 worker, waits for its delivered result, pane and mailbox cleanup, continues the
 exact worker session, and verifies the second result and cleanup.
 The same native harness has a bounded managed-Lead policy scenario:
 `bun scripts/omp-response-recovery-check.ts --manager-handoff` (after
-`npm run build`). A restored Manager delegates a project Lead, pauses and
+`bun run build`). A restored Manager delegates a project Lead, pauses and
 resumes the same assigned session twice, and sends a new coordination message
 after each resume. The strict scenario requires default-active late tools:
 `list_agents` calls and probe executions check reconciliation with a saved empty
@@ -91,21 +95,21 @@ complete, run the following as the final pre-commit sequence:
 
 ```sh
 # Final pre-commit mutation; run once only.
-npm run format
+bun run format
 
 # Read-only verification before staging or committing.
-npm run format:check
-npm run check
+bun run format:check
+bun run check
 git diff --check
 ```
 
 Do not run formatting again between these verification commands and staging or
 committing.
 
-`npm run format` applies formatting; `npm run format:check` verifies it without
+`bun run format` applies formatting; `bun run format:check` verifies it without
 changing files. Both use the locally installed Prettier version pinned by the
-lockfile. `npm run check` runs the bounded behavioral test suite,
-`npm run validate` composes formatting verification, tests, build, and package
+lockfile. `bun run check` runs the bounded behavioral test suite,
+`bun run validate` composes formatting verification, tests, build, and package
 audit, and `git diff --check` checks Git whitespace.
 
 When reviewing staged work, also run as appropriate:
@@ -114,7 +118,7 @@ When reviewing staged work, also run as appropriate:
 git diff HEAD --check
 ```
 
-## What `npm run check` does
+## What `bun run check` does
 
 The repository check command runs the complete Node test set in one isolated
 process tree with a bounded suite deadline. Node's native TypeScript support
@@ -151,26 +155,25 @@ require a Job Object and is not implemented.
 
 ## Focused tests
 
-During implementation, use Node's direct test runner through the normal npm
-interface:
+During implementation, invoke the configured Node test runner through Bun:
 
 ```sh
 # all tests
-npm test
+bun run test
 
 # one test file
-npm test -- extension/<area>.test.ts
+bun run test -- extension/<area>.test.ts
 
 # one test name within a selected file
-npm test -- --test-name-pattern="<pattern>" extension/<area>.test.ts
+bun run test -- --test-name-pattern="<pattern>" extension/<area>.test.ts
 ```
 
 For supervision changes, useful focused examples are:
 
 ```sh
-npm test -- extension/supervision.test.ts
-npm test -- --test-name-pattern="lease" extension/supervision.test.ts
-npm test -- --test-name-pattern="inspect" extension/controller-api.test.ts
+bun run test -- extension/supervision.test.ts
+bun run test -- --test-name-pattern="lease" extension/supervision.test.ts
+bun run test -- --test-name-pattern="inspect" extension/controller-api.test.ts
 ```
 
 These are command examples, not recorded results. Live Pi/herdr acceptance is
@@ -184,63 +187,35 @@ complete, run the final pre-commit sequence above. The full repository check is
 the read-only verification step:
 
 ```sh
-npm run check
+bun run check
 ```
 
-`npm run check` remains the bounded full check, including platform-appropriate
+`bun run check` remains the bounded full check, including platform-appropriate
 process-tree cleanup when the test runner times out or leaks descendants.
 
 ## Dependency availability
 
-A fresh worktree may not contain `node_modules`.
-
-Before running local validation, ensure dependencies are installed in that
-worktree. If `node_modules` is absent, run `npm ci` from that checkout.
-
-### Optional setup for newly created worktrees
-
-The repository includes a `post-checkout` hook that runs `npm ci` synchronously
-when Git creates a new linked worktree. It is not enabled automatically. To
-enable it, run these steps from the trusted **primary checkout** (not a linked
-worktree).
-
-First inspect the configured hook directory and its origin:
+Use Bun to invoke package scripts, preserving each script's configured runtime;
+`bun run test` and `bun run build` still execute their configured Node commands.
+The verified dependency preparation command is:
 
 ```sh
-git config --show-origin --get core.hooksPath
+bun install --frozen-lockfile --no-save --ignore-scripts
 ```
 
-Inspect its existing executable hooks as well; if `core.hooksPath` is unset,
-inspect the repository's default hooks directory using
-`git rev-parse --git-path hooks`.
+Bun imports the existing `package-lock.json` without saving a Bun lockfile or
+changing the package manifest or npm lockfile. This route was verified with
+Bun 1.4.4 both in a fresh worktree without `node_modules` and in an
+already-installed worktree against native OMP 18.12.3. Fresh preparation
+installed 246 packages with lifecycle scripts disabled; native session
+inspection and the configured build passed. Exact path-for-path dependency
+graph equivalence has not been verified. Installation requires explicit
+authorization.
 
-If an existing hook configuration or hook manager would be displaced, retain
-that configuration or integrate the script manually; this repository does not
-install a dispatcher. `core.hooksPath` selects the whole hooks directory, so
-changing it can disable other hooks. If no existing configuration would be
-displaced, enable the repository hook locally:
-
-```sh
-git config --local core.hooksPath "$(pwd -P)/.githooks"
-```
-
-This local, optional setting affects only this repository. Its absolute path
-deliberately points all linked worktrees to the same trusted script; ordinary
-worktrees share the repository's common Git configuration. Enabling it is an
-explicit developer trust decision: creating a new linked worktree in this
-repository will run `npm ci`, which may execute dependency lifecycle scripts.
-This authorization comes from the developer, not Pi's Agent approval system.
-Only enable it for a repository and branches whose code you trust. Do not treat
-externally supplied branches as implicitly safe, disable Pi authorization, or
-load secrets from the primary checkout into worktrees. npm must also be
-available in the environment of the Git process that creates the worktree (for
-example, a long-lived Herdr server), not merely in an interactive shell.
-
-The hook applies only to newly created linked worktrees. It does not prepare
-existing worktrees, and an installation failure may leave the new checkout in
-place even though Git reports failure. Inspect that checkout, resolve the
-installation cause, run `npm ci` successfully in it, then retry delegation on
-the existing branch. Do not assume failed creation removed the checkout.
+The optional repository `post-checkout` hook still invokes npm; it is not the
+Bun preparation path. Prepare dependencies explicitly rather than enabling
+that hook for this workflow. A failed worktree creation may leave its checkout
+in place; inspect it before retrying delegation on the existing branch.
 
 ## Failed or non-converging check
 
@@ -267,18 +242,18 @@ credentials. It does not verify real-model decisions. The supported simulated
 scenarios are `core`, `continuation`, `chief-tree`, `supervisor-agent`, and
 `terminal-failure`.
 
-`npm run validate` remains unchanged and does not run smoke. Manual/live smoke
+`bun run validate` remains unchanged and does not run smoke. Manual/live smoke
 remains separate and opt-in. For cross-process Pi/Herdr behavior outside the CI
 acceptance, choose an isolated smoke scenario according to the change:
 
 ```sh
-npm run smoke
-npm run smoke -- core
-npm run smoke -- continuation
-npm run smoke -- chief-tree
-npm run smoke -- supervisor-agent
-npm run smoke -- manager-recovery
-npm run smoke -- terminal-failure
+bun run smoke
+bun run smoke -- core
+bun run smoke -- continuation
+bun run smoke -- chief-tree
+bun run smoke -- supervisor-agent
+bun run smoke -- manager-recovery
+bun run smoke -- terminal-failure
 ```
 
 The opt-in `--simulated` mode uses Pi's native faux provider without remote
@@ -289,8 +264,8 @@ real Pi transcript; the simulated scenarios require those delivered results
 and correlated tool evidence. Without that flag, smoke remains live-model
 acceptance and uses the configured `pi-herdsman.smoke-model` or a one-run
 `--model` override.
-`npm run smoke` defaults to live `core`. The runner creates its own isolated
+`bun run smoke` defaults to live `core`. The runner creates its own isolated
 Herdr server and workspace, so smoke can run from an ordinary repository
 shell, including one already inside Herdr. See [Smoke testing](smoke-testing.md)
 for setup, scope, and isolation. Smoke is opt-in and not part of
-`npm run validate`.
+`bun run validate`.

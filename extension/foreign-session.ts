@@ -1,4 +1,5 @@
 import {
+  type ExtensionContext,
   getAgentDir,
   parseSessionEntries,
   type SessionEntry,
@@ -96,6 +97,28 @@ export function readForeignSessionHeader(
   } finally {
     closeSync(fd);
   }
+}
+
+/** Prove the current native identity before using its transcript as a creator. */
+export function nativeSessionFile(
+  manager: Pick<
+    ExtensionContext["sessionManager"],
+    "getSessionId" | "getSessionFile"
+  >,
+): string {
+  const id = manager.getSessionId();
+  const file = manager.getSessionFile();
+  if (!id || !file || !isAbsolute(file) || !file.endsWith(".jsonl"))
+    throw new Error(
+      "Native session identity requires an exact persisted transcript",
+    );
+  const canonical = realpathSync(file);
+  const header = readForeignSessionHeader(canonical);
+  if (!canonical.endsWith(".jsonl") || !header || header.id !== id)
+    throw new Error(
+      "Native session identity conflicts with its persisted transcript",
+    );
+  return canonical;
 }
 
 export function inspectSessionFile(path: string): ForeignSessionSnapshot {
@@ -203,12 +226,23 @@ export function findSessionFileById(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-  for (const bucket of buckets) {
-    if (!bucket.isDirectory()) continue;
-    const directory = join(root, bucket.name);
-    for (const filename of readdirSync(directory)) {
-      if (!filename.endsWith(`_${id}.jsonl`)) continue;
-      const path = join(directory, filename);
+  const directories = buckets
+    .filter((bucket) => bucket.isDirectory())
+    .map((bucket) => join(root, bucket.name));
+  while (directories.length) {
+    const directory = directories.pop()!;
+    const entries = readdirSync(directory, { withFileTypes: true });
+    const transcripts = new Set(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+        .map((entry) => entry.name),
+    );
+    for (const entry of entries) {
+      // Only native transcript-stem directories, never arbitrary artifacts or symlinks.
+      if (entry.isDirectory() && transcripts.has(`${entry.name}.jsonl`))
+        directories.push(join(directory, entry.name));
+      if (!entry.isFile() || !entry.name.endsWith(`_${id}.jsonl`)) continue;
+      const path = join(directory, entry.name);
       try {
         const header = readForeignSessionHeader(path);
         if (
