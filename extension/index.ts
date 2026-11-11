@@ -17,6 +17,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import packageMetadata from "../package.json" with { type: "json" };
 import { registerOmpRuntime } from "./omp-runtime.ts";
+import { registerDesktopNotifications } from "./notification-runtime.ts";
 import { readOmpLaunchSettings } from "./omp-settings.ts";
 import {
   findSessionFileById,
@@ -112,6 +113,7 @@ import {
 import {
   captureStartupDiagnostic,
   closeHerdrPane,
+  verifiedHerdrAgent,
   herdrAgentAlias,
   herdrSessionSnapshot,
   listHerdrAgents,
@@ -131,6 +133,7 @@ import {
   stopHerdrAgentPreservingPane,
   HerdrStartFailure,
   validateHerdrStatus,
+  type HerdrRecord,
   type ExpectedSession,
   type StartedHerdrAgent,
   type HerdrStartPlacement,
@@ -223,6 +226,7 @@ import {
   readProjectAssignment,
   listProjectAssignments,
   findProjectAssignmentBySession,
+  globalProjectAssignmentSnapshot,
   releaseProjectAssignment,
   retireProjectAssignment,
   type ChiefDescriptor,
@@ -265,6 +269,7 @@ import {
   updateProjectOverride,
   updateConfig,
   validByteLimit,
+  type HerdsmanConfig,
 } from "./config.ts";
 import {
   activeLeadRole,
@@ -1723,8 +1728,14 @@ function registerHerdsman(pi: ExtensionAPI): void {
         updateConfig("spawnPlacement", placement as SpawnPlacement),
       updateMessageLimit: (key: string, value: number | undefined) =>
         updateConfig(key as any, value),
-      updateConfig: (key: string, value: unknown) =>
-        updateConfig(key as any, value as any),
+      updateConfig: <K extends keyof HerdsmanConfig>(
+        key: K,
+        value: HerdsmanConfig[K] | undefined,
+      ) => {
+        updateConfig(key, value);
+        if (key === "desktopNotifications")
+          pi.events.emit("pi-herdsman:desktop-notifications", undefined);
+      },
       collectOwnedSessionUsage,
       formatSessionUsage,
     };
@@ -2337,6 +2348,85 @@ function registerHerdsman(pi: ExtensionAPI): void {
       leadStatusRuntime = leadRuntimes.statusRuntime;
       projectRuntime = leadRuntimes.projectRuntime!;
       leadHerdRunRuntime = leadRuntimes.herdRunRuntime!;
+      registerDesktopNotifications(pi, {
+        enabled: () => readConfig().desktopNotifications,
+        current: async (ctx) => {
+          const sessionId = ctx.sessionManager.getSessionId();
+          const sessionFile = ctx.sessionManager.getSessionFile();
+          const paneId = process.env.HERDR_PANE_ID;
+          const tabId = process.env.HERDR_TAB_ID;
+          const workspaceId = process.env.HERDR_WORKSPACE_ID;
+          if (!sessionId || !sessionFile || !paneId || !tabId || !workspaceId)
+            return undefined;
+          let latest: HerdrRecord | undefined;
+          const verified = await verifiedHerdrAgent(
+            {
+              piSessionId: sessionId,
+              piSessionFile: sessionFile,
+              paneId,
+              tabId,
+              workspaceId,
+            },
+            {
+              listAgents: async () =>
+                (await listAllHerdrAgents(pi, ctx, ctx.signal)).agents,
+              getAgent: async (target) => {
+                latest = (
+                  await runHerdr(pi, ctx, ["agent", "get", target], {
+                    signal: ctx.signal,
+                  })
+                ).agent;
+                return latest;
+              },
+              expectedSession,
+              isPiAgent,
+              matchesExpectedSession,
+            },
+          );
+          const agent = verified && latest;
+          if (
+            !agent ||
+            agent.pane_id !== paneId ||
+            agent.tab_id !== tabId ||
+            agent.workspace_id !== workspaceId ||
+            ctx.sessionManager.getSessionId() !== sessionId ||
+            !Number.isSafeInteger(agent.state_change_seq) ||
+            agent.state_change_seq < 0 ||
+            !["idle", "done", "working", "blocked", "unknown"].includes(
+              agent.agent_status,
+            ) ||
+            (agent.completion_seq !== undefined &&
+              (!Number.isSafeInteger(agent.completion_seq) ||
+                agent.completion_seq < 0))
+          )
+            return undefined;
+          // Managed origin is session-wide and survives automatic mailbox cleanup.
+          if (sessionAgentIdentity(ctx.sessionManager.getEntries(), sessionId))
+            return undefined;
+          // Global exact-session authority also covers manual continuation outside a worktree.
+          // An unresolved repository scope is never evidence that the session is standalone.
+          const ownership = scanAgentStates();
+          if (
+            ownership.issues.length ||
+            ownership.states.some(
+              ({ state }) => state.piSessionId === sessionId,
+            )
+          )
+            return undefined;
+          if (globalProjectAssignmentSnapshot().has(sessionId))
+            return undefined;
+          const identity = leadRuntimes.notificationRole(ctx);
+          if (!identity) return undefined;
+          return {
+            session: sessionId,
+            ...identity,
+            enabled: readConfig().desktopNotifications,
+            state: agent.agent_status === "done" ? "idle" : agent.agent_status,
+            sequence: agent.state_change_seq,
+            semanticCompletion: agent.completion_seq,
+          };
+        },
+      });
       leadRuntimes.controller!.registerTools(
         controllerScope.kind === "root" ? leadHerdRunRuntime.begin : undefined,
       );

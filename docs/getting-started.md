@@ -83,6 +83,9 @@ Continue with:
 - [Agent-definition schema](reference/agent-definition-schema.md)
 - [Configuration](reference/configuration.md)
 
+Desktop notifications for sessions you manage directly are off by default; see
+[Desktop notifications](reference/configuration.md#desktop-notifications).
+
 ## 6. Observe active work
 
 The status widget shows current managed work and transient startup activity.

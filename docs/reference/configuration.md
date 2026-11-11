@@ -27,7 +27,7 @@ Two preferences can be overridden for a trusted project in Pi's
 ```
 
 Only `autoActivateManager` and `contextRetirement` are project-overridable;
-`worktreeRemovalPreapprovedRepos` is user-only.
+`desktopNotifications` and `worktreeRemovalPreapprovedRepos` are user-only.
 Built-in defaults are overlaid by the global configuration, then by explicitly
 set project values. An omitted project property inherits the global value;
 explicit `false` overrides global `true`. Project overrides apply only when Pi
@@ -50,6 +50,7 @@ schema is:
   "spawnPlacement": "subtree",
   "contextRetirement": true,
   "autoActivateManager": false,
+  "desktopNotifications": false,
   "inlineAttachmentLimitBytes": 131072,
   "mailboxPayloadLimitBytes": 131072,
   "worktreeRemovalPreapprovedRepos": []
@@ -64,6 +65,7 @@ An absent file means these defaults:
 | `spawnPlacement`                  |          `subtree` | `tab`, `subtree`, `split`                         |
 | `contextRetirement`               |               true | boolean                                           |
 | `autoActivateManager`             |              false | boolean                                           |
+| `desktopNotifications`            |              false | boolean                                           |
 | `inlineAttachmentLimitBytes`      | `131072` (128 KiB) | integer from 1024 (1 KiB) through 1048576 (1 MiB) |
 | `mailboxPayloadLimitBytes`        | `131072` (128 KiB) | integer from 1024 (1 KiB) through 1048576 (1 MiB) |
 | `worktreeRemovalPreapprovedRepos` |               `[]` | array of absolute repository keys                 |
@@ -122,6 +124,85 @@ Placement affects future starts, not existing agents. `tab` uses one lead-owned
 agents tab, `subtree` gives each lead-direct agent its own tab, and `split`
 splits from the caller's pane. Nested delegation always splits in its owner's
 current tab.
+
+## Desktop notifications
+
+When `desktopNotifications` is `true`, an interactive session running inside
+Herdr raises its own desktop notification when a session you manage directly
+finishes work or newly needs input. It is off by default. Toggle it in
+`/herdsman → Settings → Desktop notifications`; the change applies to the
+current session without a reload and never replays earlier events. The setting
+is user-wide and has no project override.
+
+This feature does not change Herdr's own popup or sound settings. Herdr's global
+delivery switches silence every session, so to hear only these notifications,
+turn Herdr's off yourself in its `config.toml`:
+
+```toml
+[ui.toast]
+delivery = "off"
+
+[ui.sound]
+enabled = false
+```
+
+Herdsman reports state to Herdr exactly as before; the sidebar, asks, results,
+and coordination are unaffected.
+
+### Which sessions notify
+
+Only a verified Manager, Chief, or standalone Lead notifies. Assigned Managed
+Leads and delegated Agents stay silent, including when they need input.
+Eligibility comes from the session's exact verified identity, its durable Agent
+ownership, and its project assignment, not from the directory, worktree, label,
+or launch profile. A session whose identity cannot be verified or is ambiguous
+stays silent. A manually continued managed session stays managed. When a session
+becomes eligible by a confirmed takeover, or ceases to be eligible, only later
+events are affected; earlier ones are not replayed.
+
+### When it notifies
+
+- **Completion:** work ended successfully and Herdr's fresh state for that
+  session is idle. Startup, restored idle sessions, duplicate Herdr events, and
+  scheduled continuations do not count.
+- **Needs input:** the session newly becomes blocked on a question or approval.
+
+An eligible event waits one second, then is checked against current state before
+it is sent. It is dropped if work resumed, the input was resolved, the session
+was replaced or shut down, the feature was disabled, or ownership changed.
+Selecting the session's tab does not suppress a notification. Each notification
+is titled `Herdsman · <role>` and names the session and event; transcript
+content is not included.
+
+This relies on Herdr's event subscription and does not raise the supported
+Herdr or runtime minimum. Sessions outside Herdr or without a UI do not notify.
+
+### Platform prerequisites
+
+Delivery uses the operating system's own notifier and the default appearance,
+sound, and click behavior. Clicking does not focus the session. Operating
+system notification permissions, Do Not Disturb, and sound settings remain
+authoritative, so a notification can be accepted yet not shown or heard. Each
+platform needs its tool and permissions in place before you opt in:
+
+| Platform | Used                              | Prerequisites                                                                                                                 |
+| -------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Linux    | `notify-send` (libnotify)         | `notify-send` on `PATH` and a running desktop notification service on the session D-Bus. Requests the standard message sound. |
+| macOS    | `osascript` notification, `Glass` | Allow notifications for the script host in System Settings.                                                                   |
+| Windows  | Windows PowerShell toast          | Windows PowerShell's Start-menu shortcut registered (`Get-StartApps`), and its notifications enabled in Windows settings.     |
+
+On Windows, restore the PowerShell Start-menu shortcut if it is missing.
+Herdsman checks that the entry exists and that notifications are enabled, but
+that does not guarantee a toast is presented. Availability on a given system
+is not guaranteed on any platform.
+
+A delivery attempt that fails or takes longer than five seconds produces one
+bounded warning in the session UI naming the missing prerequisite. It never
+blocks or alters coordination, and no fallback delivery is attempted.
+
+macOS and Windows delivery have not been run against real systems, so treat
+their prerequisites as documented expectations until you confirm them on your
+machine.
 
 ## Worktree removal preauthorization
 

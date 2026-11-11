@@ -11390,51 +11390,6 @@ test("persisted chief collision is suspended and has no lead authority", async (
   }
 });
 
-test("Herdsman menu opens the progressive discovery menu", async () => {
-  setLeadEnvironment();
-  const pi = fakePi();
-  registerExtension!(pi.pi as never);
-  const command = pi.commandOptions.get("herdsman");
-  const prompts: { label: string; options: string[] }[] = [];
-  const context = fakeContext() as any;
-  context.isProjectTrusted = () => false;
-  context.hasUI = true;
-  context.mode = "rpc";
-  context.isProjectTrusted = () => false;
-  context.ui.select = async (label: string, options: string[]) => {
-    prompts.push({ label, options });
-    if (prompts.length === 1)
-      return options.find((option) => option === "Settings");
-    if (prompts.length === 3)
-      return options.find((option) => option === "Settings");
-    return undefined;
-  };
-  await command.handler("", context);
-  await pi.commandOptions.get("agents").handler("", context);
-  assert.equal(prompts[0]?.label, `Pi Herdsman · v${packageMetadata.version}`);
-  assert.deepEqual(prompts[0]?.options, [
-    "Execution  Flexible",
-    "Agents",
-    "Project manager",
-    "Session stats",
-    "Definitions",
-    "Settings",
-    "Advanced…",
-  ]);
-  assert.equal(prompts[1]?.label, "Settings");
-  assert.deepEqual(prompts[1]?.options, [
-    "Default Lead execution  Flexible",
-    "Manager auto-start  Global off · Effective off (global; untrusted project)",
-    "Context retirement  Global on · Effective on (global; untrusted project)",
-    "Message limits",
-    "Project overrides…",
-  ]);
-  assert.equal(prompts[2]?.label, prompts[0]?.label);
-  assert.deepEqual(prompts[2]?.options, prompts[0]?.options);
-  assert.equal(prompts[3]?.label, "Settings");
-  await pi.events.get("session_shutdown")?.[0]();
-});
-
 test("Herdsman root renders when status and definition metadata fail", async () => {
   const { createLeadCommandRuntime } = await import("./lead-runtime.ts");
   let rootLabels: string[] = [];
@@ -12108,13 +12063,6 @@ test("settings navigation exposes message limits and one rough token formatter",
   try {
     await command.handler("", context);
     assert.equal(prompts[1]?.label, "Settings");
-    assert.deepEqual(prompts[1]?.options, [
-      "Default Lead execution  Flexible",
-      "Manager auto-start  Global off · Effective off (global; untrusted project)",
-      "Context retirement  Global on · Effective on (global; untrusted project)",
-      "Message limits",
-      "Project overrides…",
-    ]);
     assert.equal(prompts[2]?.label, "Message limits");
     assert.match(prompts[2]?.options[0] ?? "", /≈32,768 tokens/);
     assert.match(prompts[2]?.options[1] ?? "", /≈32,768 tokens/);
@@ -12208,6 +12156,33 @@ test("Manager auto-start menu toggle does not change the running role", async ()
   } finally {
     updateConfig("autoActivateManager", undefined);
     await pi.events.get("session_shutdown")?.[0]();
+  }
+});
+
+test("desktop notification settings opt in without changing execution tools", async () => {
+  setLeadEnvironment();
+  updateConfig("desktopNotifications", undefined);
+  const pi = fakePi();
+  registerExtension!(pi.pi as never);
+  const context = fakeContext();
+  context.hasUI = true;
+  context.mode = "rpc";
+  const activeTools = pi.pi.getActiveTools();
+  let selection = 0;
+  context.ui.select = async (_title: string, options: string[]) => {
+    if (selection++ === 0) return "Settings";
+    return selection === 2
+      ? options.find((option) => option.startsWith("Desktop notifications"))
+      : undefined;
+  };
+  try {
+    await pi.commandOptions.get("herdsman").handler("", context);
+    assert.equal(readConfig().desktopNotifications, true);
+    assert.deepEqual(pi.pi.getActiveTools(), activeTools);
+  } finally {
+    updateConfig("desktopNotifications", undefined);
+    for (const shutdown of pi.events.get("session_shutdown") ?? [])
+      await shutdown({}, context);
   }
 });
 

@@ -438,6 +438,7 @@ type LeadCommandHost = {
     selectedValue?: string,
   ): Promise<string | undefined>;
   readConfig: typeof import("./config.ts").readConfig;
+  updateConfig: typeof import("./config.ts").updateConfig;
   readEffectiveConfig: typeof import("./config.ts").readEffectiveConfig;
   readProjectOverrides: typeof import("./config.ts").readProjectOverrides;
   updateProjectOverride: typeof import("./config.ts").updateProjectOverride;
@@ -2292,6 +2293,12 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
               help: "Retire managed-Agent sessions at automatic context pressure instead of allowing normal threshold compaction.",
             },
             {
+              value: "desktop-notifications",
+              label: "Desktop notifications",
+              description: config.desktopNotifications ? "On" : "Off",
+              help: "Independent desktop completion and needs-input alerts for verified user-managed sessions. Manage native Herdr popups and sounds separately.",
+            },
+            {
               value: "message-limits",
               label: "Message limits",
               help: "Configure inline attachment and managed mailbox payload byte limits.",
@@ -2332,6 +2339,10 @@ export function createLeadCommandRuntime(host: LeadCommandHost) {
             config.defaultLeadExecution,
           );
           if (mode) host.updateConfig("defaultLeadExecution", mode);
+        } else if (selected === "desktop-notifications") {
+          const enabled = !host.readConfig().desktopNotifications;
+          host.updateConfig("desktopNotifications", enabled);
+          ctx.ui.notify(`Desktop notifications: ${enabled ? "on" : "off"}`);
         } else if (
           selected === "context-retirement" ||
           selected === "auto-activate-manager"
@@ -4490,6 +4501,24 @@ export function registerLeadRuntime(
     return shutdown.shutdown(ctx);
   });
   return {
+    notificationRole: (ctx: ExtensionContext) => {
+      if (
+        options.leadRuntime?.leadContext?.sessionManager.getSessionId() !==
+        ctx.sessionManager.getSessionId()
+      )
+        return undefined;
+      const role = verifiedActiveRootRole();
+      if (!role) return undefined;
+      return {
+        role:
+          role === "lead"
+            ? ("Lead" as const)
+            : role === "manager"
+              ? ("Manager" as const)
+              : ("Chief" as const),
+        authority: `${role}:${ctx.sessionManager.getSessionId()}:${options.leadRuntime.chiefModeGeneration}`,
+      };
+    },
     roleTransitions,
     publishLeadRole,
     queueLeadMetadata,

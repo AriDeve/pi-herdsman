@@ -32,6 +32,7 @@ export type HerdsmanConfig = {
   defaultLeadExecution: LeadExecutionMode;
   contextRetirement: boolean;
   autoActivateManager: boolean;
+  desktopNotifications: boolean;
   worktreeRemovalPreapprovedRepos: string[];
   inlineAttachmentLimitBytes: number;
   mailboxPayloadLimitBytes: number;
@@ -42,6 +43,7 @@ export const DEFAULT_CONFIG: HerdsmanConfig = {
   defaultLeadExecution: "flexible",
   contextRetirement: true,
   autoActivateManager: false,
+  desktopNotifications: false,
   worktreeRemovalPreapprovedRepos: [],
   inlineAttachmentLimitBytes: DEFAULT_BYTE_LIMIT,
   mailboxPayloadLimitBytes: DEFAULT_BYTE_LIMIT,
@@ -62,6 +64,7 @@ const CONFIG_KEYS = new Set<ConfigKey>([
   "defaultLeadExecution",
   "contextRetirement",
   "autoActivateManager",
+  "desktopNotifications",
   "worktreeRemovalPreapprovedRepos",
   "inlineAttachmentLimitBytes",
   "mailboxPayloadLimitBytes",
@@ -114,6 +117,11 @@ function parseRawConfig(content: string): Partial<HerdsmanConfig> {
     if (typeof record.autoActivateManager !== "boolean")
       throw new Error("Invalid Pi Herdsman config field autoActivateManager");
     result.autoActivateManager = record.autoActivateManager;
+  }
+  if ("desktopNotifications" in record) {
+    if (typeof record.desktopNotifications !== "boolean")
+      throw new Error("Invalid Pi Herdsman config field desktopNotifications");
+    result.desktopNotifications = record.desktopNotifications;
   }
   if ("worktreeRemovalPreapprovedRepos" in record) {
     if (!validRepoIdentities(record.worktreeRemovalPreapprovedRepos))
@@ -380,6 +388,10 @@ export function updateConfig<K extends ConfigKey>(
         throw new Error("Invalid Pi Herdsman config field contextRetirement");
       if (key === "autoActivateManager" && typeof value !== "boolean")
         throw new Error("Invalid Pi Herdsman config field autoActivateManager");
+      if (key === "desktopNotifications" && typeof value !== "boolean")
+        throw new Error(
+          "Invalid Pi Herdsman config field desktopNotifications",
+        );
       if (
         key === "worktreeRemovalPreapprovedRepos" &&
         !validRepoIdentities(value)
@@ -392,6 +404,7 @@ export function updateConfig<K extends ConfigKey>(
         key !== "defaultLeadExecution" &&
         key !== "contextRetirement" &&
         key !== "autoActivateManager" &&
+        key !== "desktopNotifications" &&
         key !== "worktreeRemovalPreapprovedRepos" &&
         !validByteLimit(value)
       )

@@ -24,6 +24,8 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  CURRENT_SESSION_VERSION,
+  parseSessionEntries,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AskRecord,
@@ -85,8 +87,12 @@ import support, {
   testTmpRoot,
 } from "./support.ts";
 const { updateConfig } = await import("./config.ts");
-const { AGENT_REQUIRED_EVIDENCE_ENTRY, managedAgentRequiredEvidence } =
-  await import("./managed-agent-runtime.ts");
+const {
+  AGENT_REQUIRED_EVIDENCE_ENTRY,
+  managedAgentRequiredEvidence,
+  ensureManagedAgentIdentity,
+} = await import("./managed-agent-runtime.ts");
+const { removeAgentMailbox } = await import("./mailbox.ts");
 const {
   SHARED_AGENT_INSTRUCTIONS,
   rootStatusBreadcrumb,
@@ -4261,6 +4267,60 @@ test("session agent identity reads the session-wide entry array", () => {
       label: "reviewer",
     },
   );
+});
+
+test("managed origin remains recoverable from the persisted session after mailbox cleanup", () => {
+  const mailbox = setAgentEnvironment("persisted-origin");
+  const pi = fakePi();
+  const ctx = fakeAgentContext(pi.entries, []);
+  const sessionId = randomUUID();
+  const path = join(testTmpRoot, `origin-${sessionId}.jsonl`);
+  ctx.sessionManager.getSessionId = () => sessionId;
+  ctx.sessionManager.getSessionFile = () => path;
+  writeAgentState(mailbox, {
+    ...managedState("persisted-origin"),
+    piSessionId: sessionId,
+    piSessionFile: path,
+  });
+  try {
+    ensureManagedAgentIdentity(
+      pi.pi as never,
+      ctx as never,
+      "agent",
+      "persisted-origin",
+    );
+    const entry = pi.entries[0];
+    assert.ok(entry && typeof entry === "object");
+    const timestamp = new Date().toISOString();
+    writeFileSync(
+      path,
+      [
+        {
+          type: "session",
+          version: CURRENT_SESSION_VERSION,
+          id: sessionId,
+          cwd: ctx.cwd,
+          timestamp,
+        },
+        { ...entry, id: randomUUID(), parentId: null, timestamp },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n") + "\n",
+    );
+    removeAgentMailbox(mailbox);
+    assert.equal(readAgentState(mailbox), undefined);
+    assert.deepEqual(
+      sessionAgentIdentity(
+        parseSessionEntries(readFileSync(path, "utf8")),
+        sessionId,
+      ),
+      { sessionId, definition: "agent", label: "persisted-origin" },
+    );
+  } finally {
+    removeAgentMailbox(mailbox);
+    realFs.rmSync(path, { force: true });
+    setLeadEnvironment();
+  }
 });
 
 test("required evidence restore verifies the accepted managed assignment identity", () => {

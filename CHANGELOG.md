@@ -22,6 +22,7 @@
 - Allow user-preauthorized repositories to run guarded Manager worktree removal through `remove_worktree`, and record unpreauthorized requests as pending review intent on the active session branch with correlated `request_id`; reject sessions without a native session-file identity before recording intent. Add `/manager remove-preapproval on|off`, `/manager settings`, and `/manager remove` review.
 - Keep Manager-only removal status off unrelated Lead recovery paths, preserving accepted results when session identity is unavailable.
 - Give new managed Agent and assigned Lead transcripts creation-time readable names with a complete UUID suffix, preserving native parent-stem hierarchy, exact-session continuation, and immutable history.
+- Add opt-in, default-off desktop completion and needs-input notifications on Linux, macOS, and Windows for verified Managers, Chiefs, and standalone Leads, with one-second coalescing, current-state revalidation, and bounded delivery diagnostics; assigned Leads and delegated Agents stay silent, and Herdr's own settings are left untouched.
 
 ## [0.31.0](https://github.com/boadij/pi-herdsman/compare/v0.30.0...v0.31.0) (2026-10-19)
 

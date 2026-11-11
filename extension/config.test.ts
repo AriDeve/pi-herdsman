@@ -95,6 +95,17 @@ test("missing config resolves to defaults without creating storage", () => {
   assert.equal(realFs.existsSync(herdsmanDataRoot()), false);
 });
 
+test("desktop notifications are opt-in and persist only boolean values", () => {
+  resetConfig();
+  assert.equal(readConfig().desktopNotifications, false);
+  updateConfig("desktopNotifications", true);
+  assert.equal(readConfig().desktopNotifications, true);
+  updateConfig("desktopNotifications", false);
+  assert.equal(readConfig().desktopNotifications, false);
+  realFs.writeFileSync(herdsmanConfigPath(), '{"desktopNotifications":"true"}');
+  assert.throws(() => readConfig(), /desktopNotifications/);
+});
+
 test("partial and complete valid configs overlay defaults", () => {
   realFs.mkdirSync(herdsmanDataRoot(), { recursive: true });
   realFs.writeFileSync(
@@ -127,6 +138,7 @@ test("partial and complete valid configs overlay defaults", () => {
     defaultLeadExecution: "orchestrate",
     contextRetirement: true,
     autoActivateManager: true,
+    desktopNotifications: false,
     worktreeRemovalPreapprovedRepos: [],
     inlineAttachmentLimitBytes: MIN_BYTE_LIMIT,
     mailboxPayloadLimitBytes: MAX_BYTE_LIMIT,

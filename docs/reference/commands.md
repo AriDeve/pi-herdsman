@@ -58,7 +58,7 @@ Its running count and current layout are secondary metadata. The root does not
 depend on Agent status or definitions to render.
 
 `Settings` contains `Default Lead execution`, `Manager auto-start`, `Context
-retirement`, `Project overrides…`, and `Message limits`. The default is `Flexible` and applies only
+retirement`, `Desktop notifications`, `Project overrides…`, and `Message limits`. The default is `Flexible` and applies only
 when a future ordinary Lead session has no persisted execution choice; changing
 it does not change the current session. Manager auto-start and context
 retirement show their effective values and identify project overrides, when
