@@ -312,6 +312,45 @@ import type { SupervisionContextStatus } from "./presentation.ts";
 
 const HERDSMAN_VERSION = packageMetadata.version;
 
+/** Flatten recognized presentation markup without changing the native session name. */
+function notificationSessionName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const tags =
+    /<(\/?)(b|strong|i|em|u|s|strike|del|span|code|p|div|br)\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/gi;
+  const open: { name: string; start: number; end: number }[] = [];
+  const remove: { start: number; end: number; replacement: string }[] = [];
+  for (const match of name.matchAll(tags)) {
+    const [, slash, rawTag, attributes] = match;
+    const tag = rawTag.toLowerCase();
+    const start = match.index;
+    const end = start + match[0].length;
+    if (tag === "br") {
+      if (!slash && /^\s*\/?\s*$/.test(attributes))
+        remove.push({ start, end, replacement: " " });
+      continue;
+    }
+    if (slash) {
+      if (attributes.trim() || open.at(-1)?.name !== tag) continue;
+      const opening = open.pop()!;
+      const replacement = tag === "p" || tag === "div" ? " " : "";
+      remove.push({ ...opening, replacement }, { start, end, replacement });
+    } else if (
+      !attributes ||
+      (/^\s/.test(attributes) && !/\/\s*$/.test(attributes))
+    ) {
+      open.push({ name: tag, start, end });
+    }
+  }
+  remove.sort((a, b) => a.start - b.start);
+  let text = "";
+  let offset = 0;
+  for (const tag of remove) {
+    text += name.slice(offset, tag.start) + tag.replacement;
+    offset = tag.end;
+  }
+  return collapseDisplayText(text + name.slice(offset));
+}
+
 function expandablePresentation(
   expanded: boolean,
   render: (expanded: boolean) => Component,
@@ -2419,6 +2458,7 @@ function registerHerdsman(pi: ExtensionAPI): void {
           if (!identity) return undefined;
           return {
             session: sessionId,
+            name: notificationSessionName(ctx.sessionManager.getSessionName()),
             ...identity,
             enabled: readConfig().desktopNotifications,
             state: agent.agent_status === "done" ? "idle" : agent.agent_status,

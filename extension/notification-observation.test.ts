@@ -180,7 +180,7 @@ test("public Herdr subscription envelopes deliver new needs-input", async (t) =>
   assert.deepEqual(delivered, [
     {
       title: "Herdsman · Manager",
-      body: "Session aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa needs input.",
+      body: "Manager session needs input.",
     },
   ]);
 });
@@ -293,7 +293,7 @@ for (const completionSeq of [false, true])
         assert.deepEqual(delivered, [
           {
             title: "Herdsman · Manager",
-            body: "Session aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa completed.",
+            body: "Manager session completed.",
           },
         ]);
       });

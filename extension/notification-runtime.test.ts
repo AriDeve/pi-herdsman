@@ -121,7 +121,7 @@ test("native completion composes with Herdr semantics without completion_seq; co
   await observe({ state: "idle", sequence: 3 });
   await flush();
   assert.deepEqual(delivered, [
-    { title: "Herdsman · Lead", body: "Session session-a completed." },
+    { title: "Herdsman · Lead", body: "Lead session completed." },
   ]);
   await emit("agent_end", successful);
   await observe({ sequence: 4 });
@@ -144,7 +144,7 @@ test("native completion composes with Herdr semantics without completion_seq; co
   }
   await observe({ state: "blocked", sequence: 9 });
   await flush();
-  assert.equal(delivered.at(-1)?.body, "Session session-a needs input.");
+  assert.equal(delivered.at(-1)?.body, "Lead session needs input.");
   await observe({ state: "working", sequence: 10 });
   await observe({ state: "blocked", sequence: 11 });
   enabled = false;
@@ -175,7 +175,7 @@ test("native completion composes with Herdr semantics without completion_seq; co
     3,
     "session replacement leaves exactly one future delivery observer",
   );
-  assert.equal(delivered.at(-1)?.body, "Session session-b needs input.");
+  assert.equal(delivered.at(-1)?.body, "Lead session needs input.");
 });
 
 test("direct opt-in preserves a fast completion while the initial observation is in flight", async (t) => {
@@ -263,7 +263,7 @@ test("direct opt-in preserves a fast completion while the initial observation is
   assert.deepEqual(delivered, [
     {
       title: "Herdsman · Manager",
-      body: `Session ${current.session} completed.`,
+      body: "Manager session completed.",
     },
   ]);
 });

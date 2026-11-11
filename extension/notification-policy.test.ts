@@ -9,6 +9,7 @@ import {
 function fixture(send?: () => Promise<void>) {
   let current: NotificationObservation = {
     session: "session-a",
+    name: "Deployment review",
     authority: "lead:a",
     role: "Lead",
     enabled: true,
@@ -73,7 +74,7 @@ test("only fresh verified completion delivers once after coalescing", async () =
   assert.deepEqual(f.delivered, []);
   await f.flush();
   assert.deepEqual(f.delivered, [
-    { title: "Herdsman · Lead", body: "Session session-a completed." },
+    { title: "Herdsman · Lead", body: "Deployment review completed." },
   ]);
   f.observe();
   await f.flush();
@@ -87,13 +88,55 @@ test("new blocked input coalesces and resolved input cancels", async () => {
   f.observe({ sequence: 3 });
   await f.flush();
   assert.deepEqual(f.delivered, [
-    { title: "Herdsman · Lead", body: "Session session-a needs input." },
+    { title: "Herdsman · Lead", body: "Deployment review needs input." },
   ]);
   f.observe({ state: "working", sequence: 4 });
   f.observe({ state: "blocked", sequence: 5 });
   f.observe({ state: "working", sequence: 6 });
   await f.flush();
   assert.equal(f.delivered.length, 1);
+});
+
+for (const state of ["idle", "blocked"] as const)
+  test(`rename before ${state === "idle" ? "completion" : "input"} delivery uses the current name without replay`, async () => {
+    const f = fixture();
+    f.observe({}, true);
+    f.observe({ state: "working", sequence: 2 });
+    f.observe(
+      state === "idle"
+        ? { state, sequence: 3, completion: 3, completionAllowed: true }
+        : { state, sequence: 3 },
+    );
+    f.observe({ name: "Renamed session" });
+    await f.flush();
+    assert.deepEqual(f.delivered, [
+      {
+        title: "Herdsman · Lead",
+        body: `Renamed session ${state === "idle" ? "completed" : "needs input"}.`,
+      },
+    ]);
+    f.observe({ name: "Renamed again" });
+    await f.flush();
+    assert.equal(f.delivered.length, 1);
+  });
+
+test("unnamed sessions remain eligible and use a role-based fallback", async () => {
+  const f = fixture();
+  f.observe({ name: undefined, role: "Manager" }, true);
+  f.observe({ state: "working", sequence: 2 });
+  f.observe({
+    state: "idle",
+    sequence: 3,
+    completion: 3,
+    completionAllowed: true,
+  });
+  await f.flush();
+  assert.deepEqual(f.delivered, [
+    {
+      title: "Herdsman · Manager",
+      body: "Manager session completed.",
+    },
+  ]);
 });
 
 for (const [name, change] of [
@@ -174,8 +217,8 @@ test("one native completion cannot replay after a separate blocked episode", asy
   f.observe({ state: "idle", sequence: 4 });
   await f.flush();
   assert.deepEqual(f.delivered, [
-    { title: "Herdsman · Lead", body: "Session session-a completed." },
-    { title: "Herdsman · Lead", body: "Session session-a needs input." },
+    { title: "Herdsman · Lead", body: "Deployment review completed." },
+    { title: "Herdsman · Lead", body: "Deployment review needs input." },
   ]);
 });
 

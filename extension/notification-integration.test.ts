@@ -91,6 +91,8 @@ test("live exact-session filtering survives manual continuation outside worktree
   const ctx = fakeContext(f.entries);
   ctx.hasUI = true;
   ctx.mode = "rpc";
+  let sessionName = "Before rename";
+  ctx.sessionManager.getSessionName = () => sessionName;
   const subscribed = Promise.withResolvers<Socket>();
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -148,13 +150,53 @@ test("live exact-session filtering survives manual continuation outside worktree
   };
   await observe("working");
   await observe("blocked");
+  sessionName = "<b>Build finished</b>";
   await flush();
   assert.equal(
     delivered.length,
     1,
     "verified standalone outside worktrees alerts even when selected",
   );
-  assert.equal(delivered[0]?.body, `Session ${LEAD_SESSION_ID} needs input.`);
+  assert.equal(delivered[0]?.body, "Build finished needs input.");
+  assert.equal(ctx.sessionManager.getSessionName(), "<b>Build finished</b>");
+  await observe("blocked");
+  await flush();
+  assert.equal(
+    delivered.length,
+    1,
+    "renaming does not replay the pending event",
+  );
+
+  for (const [rawName, displayed] of [
+    [
+      '<span class="status"><strong>Deploy <em>ready</em></strong></span>',
+      "Deploy ready",
+    ],
+    ['<B data-title="a > b">One <b>two</b></B>', "One two"],
+    ["<div>first</div><p>second</p>", "first second"],
+    ["first<br/>second<br>third", "first second third"],
+    ["Plain session", "Plain session"],
+    ["Map<T> a < b && c > d", "Map<T> a < b && c > d"],
+    [
+      "<unknown>literal</unknown> and Map<b>",
+      "<unknown>literal</unknown> and Map<b>",
+    ],
+    ["<b></b>", "Lead session"],
+    ["<br/>", "Lead session"],
+    [" \n ", "Lead session"],
+    [`<b>${"x".repeat(79)}</b>`, "x".repeat(79)],
+    [`<b>${"😀".repeat(81)}</b>`, `${"😀".repeat(79)}…`],
+  ] as const) {
+    sessionName = rawName;
+    await observe("working");
+    await observe("blocked");
+    const before = delivered.length;
+    await flush();
+    assert.equal(delivered.length, before + 1, `delivery for ${rawName}`);
+    assert.equal(delivered.at(-1)?.body, `${displayed} needs input.`);
+    assert.equal(ctx.sessionManager.getSessionName(), rawName);
+  }
+  const eligibleDeliveries = delivered.length;
   writeProjectAssignment(runtime, {
     version: 2,
     id: LEAD_SESSION_ID,
@@ -167,7 +209,7 @@ test("live exact-session filtering survives manual continuation outside worktree
   await flush();
   assert.equal(
     delivered.length,
-    1,
+    eligibleDeliveries,
     "exact assigned session remains muted outside its worktree",
   );
   removeProjectAssignment(runtime, "elsewhere", "managed");
@@ -175,13 +217,17 @@ test("live exact-session filtering survives manual continuation outside worktree
   await flush();
   assert.equal(
     delivered.length,
-    1,
+    eligibleDeliveries,
     "assignment release does not replay muted input",
   );
   await observe("working");
   await observe("blocked");
   await flush();
-  assert.equal(delivered.length, 2, "future standalone input alerts");
+  assert.equal(
+    delivered.length,
+    eligibleDeliveries + 1,
+    "future standalone input alerts",
+  );
   writeAgentState(mailbox, {
     ...managedState("continued-notification-worker"),
     piSessionId: LEAD_SESSION_ID,
@@ -193,7 +239,7 @@ test("live exact-session filtering survives manual continuation outside worktree
   await flush();
   assert.equal(
     delivered.length,
-    2,
+    eligibleDeliveries + 1,
     "durable worker identity survives manual process continuation",
   );
   resetAgentMailbox(mailbox);
@@ -209,7 +255,7 @@ test("live exact-session filtering survives manual continuation outside worktree
   await flush();
   assert.equal(
     delivered.length,
-    2,
+    eligibleDeliveries + 1,
     "a replaced pane occupant cannot inherit eligibility",
   );
 });

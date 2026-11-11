@@ -1,5 +1,7 @@
 export type NotificationObservation = {
   session: string;
+  /** Presentation only; never used to establish session authority. */
+  name?: string;
   /** Undefined means managed, unverified, or ambiguous. Changes establish a new baseline. */
   authority?: string;
   role: "Lead" | "Manager" | "Chief";
@@ -141,7 +143,7 @@ export function createNotificationPolicy(host: Host): NotificationPolicy {
             if (!needsInput) consumedCompletion = current;
             await host.send({
               title: `Herdsman · ${latest.role}`,
-              body: `Session ${latest.session} ${needsInput ? "needs input" : "completed"}.`,
+              body: `${latest.name ?? `${latest.role} session`} ${needsInput ? "needs input" : "completed"}.`,
             });
           } catch (error) {
             if (!needsInput) consumedCompletion = current;

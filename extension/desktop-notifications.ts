@@ -41,12 +41,17 @@ export async function sendDesktopNotification(
   switch (process.platform) {
     case "linux":
       command = "notify-send";
+      // notify-send decompresses C escapes; notification daemons may parse body markup.
       args = [
         "--app-name=Pi Herdsman",
         "--hint=string:sound-name:message-new-instant",
         "--",
         notification.title,
-        notification.body,
+        notification.body
+          .replace(/\\/g, "\\\\")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;"),
       ];
       prerequisite =
         "Install notify-send and enable a desktop D-Bus notification service";
