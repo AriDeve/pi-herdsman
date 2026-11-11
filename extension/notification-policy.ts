@@ -143,7 +143,7 @@ export function createNotificationPolicy(host: Host): NotificationPolicy {
             if (!needsInput) consumedCompletion = current;
             await host.send({
               title: `Herdsman · ${latest.role}`,
-              body: `${latest.name ?? `${latest.role} session`} ${needsInput ? "needs input" : "completed"}.`,
+              body: `"${latest.name ?? `${latest.role} session`}" ${needsInput ? "needs input" : "completed"}.`,
             });
           } catch (error) {
             if (!needsInput) consumedCompletion = current;

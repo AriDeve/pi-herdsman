@@ -171,12 +171,14 @@ An eligible event waits one second, then is checked against current state before
 it is sent. It is dropped if work resumed, the input was resolved, the session
 was replaced or shut down, the feature was disabled, or ownership changed.
 Selecting the session's tab does not suppress a notification. Each notification
-is titled `Herdsman · <role>` and names the session and event. The body uses
+is titled `Herdsman · <role>` and names the session and event. The body quotes
 the current native session name, with matched `b`, `strong`, `i`, `em`, `u`,
 `s`, `strike`, `del`, `span`, `code`, `p`, and `div` formatting tags removed
-and `br` converted to a space. Unknown or unmatched tags remain literal. If the
-resulting name is empty, it uses `<role> session`. The native session name is
-unchanged; transcript content is not included.
+and `br` converted to a space. Unknown or unmatched tags remain literal.
+After whitespace and control characters are normalized, names over 60 Unicode
+code points are shortened to 57 code points followed by `...`. If the resulting
+name is empty, it uses `<role> session`. The native session name is unchanged;
+transcript content is not included.
 
 This relies on Herdr's event subscription and does not raise the supported
 Herdr or runtime minimum. Sessions outside Herdr or without a UI do not notify.

@@ -348,7 +348,12 @@ function notificationSessionName(name: string | undefined): string | undefined {
     text += name.slice(offset, tag.start) + tag.replacement;
     offset = tag.end;
   }
-  return collapseDisplayText(text + name.slice(offset));
+  const normalized = collapseDisplayText(text + name.slice(offset), Infinity);
+  if (!normalized) return undefined;
+  const characters = Array.from(normalized);
+  return characters.length <= 60
+    ? normalized
+    : `${characters.slice(0, 57).join("")}...`;
 }
 
 function expandablePresentation(

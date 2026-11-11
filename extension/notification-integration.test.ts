@@ -150,15 +150,18 @@ test("live exact-session filtering survives manual continuation outside worktree
   };
   await observe("working");
   await observe("blocked");
-  sessionName = "<b>Build finished</b>";
+  sessionName = `<b>${"😀".repeat(61)}</b>`;
   await flush();
   assert.equal(
     delivered.length,
     1,
     "verified standalone outside worktrees alerts even when selected",
   );
-  assert.equal(delivered[0]?.body, "Build finished needs input.");
-  assert.equal(ctx.sessionManager.getSessionName(), "<b>Build finished</b>");
+  assert.equal(delivered[0]?.body, `"${"😀".repeat(57)}..." needs input.`);
+  assert.equal(
+    ctx.sessionManager.getSessionName(),
+    `<b>${"😀".repeat(61)}</b>`,
+  );
   await observe("blocked");
   await flush();
   assert.equal(
@@ -176,6 +179,7 @@ test("live exact-session filtering survives manual continuation outside worktree
     ["<div>first</div><p>second</p>", "first second"],
     ["first<br/>second<br>third", "first second third"],
     ["Plain session", "Plain session"],
+    ['Say "yes" \\ now', 'Say "yes" \\ now'],
     ["Map<T> a < b && c > d", "Map<T> a < b && c > d"],
     [
       "<unknown>literal</unknown> and Map<b>",
@@ -184,8 +188,14 @@ test("live exact-session filtering survives manual continuation outside worktree
     ["<b></b>", "Lead session"],
     ["<br/>", "Lead session"],
     [" \n ", "Lead session"],
-    [`<b>${"x".repeat(79)}</b>`, "x".repeat(79)],
-    [`<b>${"😀".repeat(81)}</b>`, `${"😀".repeat(79)}…`],
+    ["x".repeat(60), "x".repeat(60)],
+    ["x".repeat(61), `${"x".repeat(57)}...`],
+    ["😀".repeat(60), "😀".repeat(60)],
+    ["😀".repeat(61), `${"😀".repeat(57)}...`],
+    [
+      `<b> ${"x".repeat(30)}\n${"y".repeat(30)} </b>`,
+      `${"x".repeat(30)} ${"y".repeat(26)}...`,
+    ],
   ] as const) {
     sessionName = rawName;
     await observe("working");
@@ -193,7 +203,7 @@ test("live exact-session filtering survives manual continuation outside worktree
     const before = delivered.length;
     await flush();
     assert.equal(delivered.length, before + 1, `delivery for ${rawName}`);
-    assert.equal(delivered.at(-1)?.body, `${displayed} needs input.`);
+    assert.equal(delivered.at(-1)?.body, `"${displayed}" needs input.`);
     assert.equal(ctx.sessionManager.getSessionName(), rawName);
   }
   const eligibleDeliveries = delivered.length;
